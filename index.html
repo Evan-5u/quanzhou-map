@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>泉州客户拜访地图</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script type="text/javascript">
+  window._AMapSecurityConfig = {
+    securityJsCode: 'de29fe2a25b992e95846932fa73c337c',
+  }
+</script>
+<script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=de29fe2a25b992e95846932fa73c337c&plugin=AMap.PlaceSearch,AMap.AutoComplete"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -614,8 +620,8 @@ document.getElementById('searchInput').addEventListener('input',function(){
   searchTimer=setTimeout(()=>doSearch(q),150);
 });
 
-// ===================== Local POI Search (works offline) =====================
-// Built-in Quanzhou area POI database - no external API needed
+// ===================== AMap (Gaode) POI Search + Local Fallback =====================
+// Built-in Quanzhou area POI database - instant fallback when AMap unavailable
 const QZ_POI=[
 // 丰泽区
 ['万达广场','丰泽区宝洲路',24.88453,118.60497],['中骏世界城','丰泽区安吉路',24.91612,118.61285],['东湖公园','丰泽区东湖街',24.91177,118.60032],
@@ -666,50 +672,120 @@ const QZ_POI=[
 ['晋江经济开发区','晋江市',24.78234,118.55678]
 ];
 
-// Local fuzzy search - instant, no network needed
-function doSearch(q){
-  const el=document.getElementById('searchResults');
-  if(!q||q.length<1){el.innerHTML='';return}
+// GCJ-02 to WGS-84 inverse conversion (approximate)
+function gcj02ToWgs84(gcjLng,gcjLat){
+  const gcj=wgs84ToGcj02(gcjLng,gcjLat);
+  return{lng:gcjLng-(gcj.lng-gcjLng),lat:gcjLat-(gcj.lat-gcjLat)};
+}
+
+// Initialize AMap PlaceSearch
+let amapPlaceSearch=null;
+try{
+  if(typeof AMap!=='undefined'){
+    amapPlaceSearch=new AMap.PlaceSearch({
+      city:'泉州',
+      citylimit:true,
+      pageSize:15,
+      pageIndex:1
+    });
+  }
+}catch(e){console.warn('AMap init failed:',e)}
+
+// Local fuzzy search (instant, used as first response + fallback)
+function searchLocal(q){
   const keywords=q.toLowerCase().split(/\s+/).filter(Boolean);
-  // Score each POI by keyword match
-  const scored=QZ_POI.map(poi=>{
-    const text=(poi[0]+' '+poi[1]).toLowerCase();
+  return QZ_POI.map(poi=>{
     let score=0;
     for(const kw of keywords){
-      if(poi[0].toLowerCase()===kw)score+=100; // exact name match
-      else if(poi[0].toLowerCase().startsWith(kw))score+=50; // name starts with
-      else if(poi[0].toLowerCase().includes(kw))score+=30; // name contains
-      else if(poi[1].toLowerCase().includes(kw))score+=10; // address contains
+      if(poi[0].toLowerCase()===kw)score+=100;
+      else if(poi[0].toLowerCase().startsWith(kw))score+=50;
+      else if(poi[0].toLowerCase().includes(kw))score+=30;
+      else if(poi[1].toLowerCase().includes(kw))score+=10;
     }
     return score>0?{poi,score}:null;
   }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,10);
-
-  if(!scored.length){
-    el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">未找到，试试：万达、水头、陈埭、服装城<br><span style="font-size:11px;color:#bbb">或在下方地图上点选位置</span></div>';
-    return;
-  }
-  el.innerHTML=scored.map(({poi})=>`
-    <div class="search-item" onclick="selectSearchResult(${poi[2]},${poi[3]},'${esc(poi[1]+' '+poi[0]).replace(/'/g,"\\'")}')">
-      <div class="name">${esc(poi[0])}</div>
-      <div class="addr">${esc(poi[1])}</div>
-    </div>
-  `).join('');
 }
 
-function selectSearchResult(lat,lng,displayName){
+function renderLocalResults(scored){
+  const el=document.getElementById('searchResults');
+  if(!scored.length){
+    el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">搜索中...</div>';
+    return;
+  }
+  el.innerHTML=scored.map(({poi})=>{
+    // Local POI coords are WGS-84
+    const wgsLat=poi[2],wgsLng=poi[3];
+    const addr=poi[1]+' '+poi[0];
+    return `<div class="search-item" onclick="selectSearchResult(${wgsLat},${wgsLng},'${esc(addr).replace(/'/g,"\\'")}',false)">
+      <div class="name">${esc(poi[0])}</div>
+      <div class="addr">${esc(poi[1])}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAmapResults(pois){
+  const el=document.getElementById('searchResults');
+  el.innerHTML=pois.map(p=>{
+    // AMap returns GCJ-02 coords
+    const gcjLng=parseFloat(p.location.lng);
+    const gcjLat=parseFloat(p.location.lat);
+    const addr=(p.pname||'')+(p.cityname||'')+(p.adname||'')+(p.address||'');
+    return `<div class="search-item" onclick="selectSearchResult(${gcjLat},${gcjLng},'${esc(p.name+' '+addr).replace(/'/g,"\\'")}',true)">
+      <div class="name">${esc(p.name)}</div>
+      <div class="addr">${esc(addr)}</div>
+    </div>`;
+  }).join('');
+}
+
+let amapSearchTimer=null;
+
+function doSearch(q){
+  const el=document.getElementById('searchResults');
+  if(!q||q.length<1){el.innerHTML='';return}
+
+  // Show local results instantly first
+  const localResults=searchLocal(q);
+  renderLocalResults(localResults);
+
+  // Then fetch AMap results (slightly delayed to batch keystrokes)
+  clearTimeout(amapSearchTimer);
+  amapSearchTimer=setTimeout(()=>{
+    if(!amapPlaceSearch){return}
+    amapPlaceSearch.search(q,function(status,result){
+      if(status==='complete'&&result.poiList&&result.poiList.pois&&result.poiList.pois.length>0){
+        renderAmapResults(result.poiList.pois);
+      }
+      // If AMap returns nothing, local results remain visible
+    });
+  },300);
+}
+
+function selectSearchResult(lat,lng,displayName,isGcj){
+  let wgsLat,wgsLng,gcjLat,gcjLng;
+  if(isGcj){
+    // Input is GCJ-02 (from AMap), convert to WGS-84 for storage
+    const wgs=gcj02ToWgs84(parseFloat(lng),parseFloat(lat));
+    wgsLat=wgs.lat;wgsLng=wgs.lng;
+    gcjLat=parseFloat(lat);gcjLng=parseFloat(lng);
+  }else{
+    // Input is WGS-84 (from local POI), convert to GCJ-02 for map display
+    wgsLat=parseFloat(lat);wgsLng=parseFloat(lng);
+    const gcj=wgs84ToGcj02(parseFloat(lng),parseFloat(lat));
+    gcjLat=gcj.lat;gcjLng=gcj.lng;
+  }
+
   document.getElementById('fAddr').value=displayName;
-  document.getElementById('fLat').value=lat;
-  document.getElementById('fLng').value=lng;
-  document.getElementById('coordHint').textContent=`坐标: ${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}`;
+  document.getElementById('fLat').value=wgsLat;
+  document.getElementById('fLng').value=wgsLng;
+  document.getElementById('coordHint').textContent=`坐标: ${wgsLat.toFixed(5)}, ${wgsLng.toFixed(5)}`;
   toggleSearch();
 
-  // Always fly to location and show marker
-  const gcj=wgs84ToGcj02(parseFloat(lng),parseFloat(lat));
+  // Fly to location on map (using GCJ-02 coords)
   if(tempMarker)map.removeLayer(tempMarker);
-  tempMarker=L.marker([gcj.lat,gcj.lng],{
+  tempMarker=L.marker([gcjLat,gcjLng],{
     icon:L.divIcon({className:'',html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff">📍</div>',iconSize:[28,28],iconAnchor:[14,14]})
   }).addTo(map);
-  map.flyTo(gcj.lat,gcj.lng,15,{duration:0.8});
+  map.flyTo(gcjLat,gcjLng,15,{duration:0.8});
 
   // Open add panel so user sees filled form
   if(!document.getElementById('panelRight').classList.contains('open')){
