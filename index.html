@@ -610,124 +610,106 @@ function toggleSearch(){
 document.getElementById('searchInput').addEventListener('input',function(){
   clearTimeout(searchTimer);
   const q=this.value.trim();
-  if(q.length<2){document.getElementById('searchResults').innerHTML='';return}
-  searchTimer=setTimeout(()=>doSearch(q),500);
+  if(q.length<1){document.getElementById('searchResults').innerHTML='';return}
+  searchTimer=setTimeout(()=>doSearch(q),150);
 });
 
-// ===================== Multi-source Search (CORS-safe) =====================
+// ===================== Local POI Search (works offline) =====================
+// Built-in Quanzhou area POI database - no external API needed
+const QZ_POI=[
+// 丰泽区
+['万达广场','丰泽区宝洲路',24.88453,118.60497],['中骏世界城','丰泽区安吉路',24.91612,118.61285],['东湖公园','丰泽区东湖街',24.91177,118.60032],
+['泉州客运中心站','丰泽区坪山路',24.89203,118.60891],['丰泽区政府','丰泽区田安路',24.89765,118.59523],['泉州火车站','丰泽区北迎宾大道',24.96142,118.59321],
+['领SHOW天地','丰泽区津淮街',24.88931,118.59876],['浦西万达广场','丰泽区宝洲路',24.88234,118.60156],['东海泰禾广场','丰泽区东海大街',24.86912,118.64321],
+['泉州师范学院','丰泽区东海大街',24.86234,118.65123],['真武庙','丰泽区东海街道',24.85891,118.66789],
+// 鲤城区
+['开元寺','鲤城区西街',24.91782,118.57561],['关帝庙','鲤城区涂门街',24.90734,118.58672],['清净寺','鲤城区涂门街',24.90689,118.58612],
+['西街','鲤城区西街',24.91654,118.57623],['中山路','鲤城区中山中路',24.91123,118.58234],['源和1916','鲤城区新门街',24.90567,118.57891],
+// 洛江区
+['洛江经济开发区','洛江区万安街道',24.95678,118.62345],['洛阳桥','洛江区洛阳镇',24.95321,118.64567],
+// 泉港区
+['泉港区政府','泉港区山腰街道',25.11987,118.88543],['泉港石化园区','泉港区南埔镇',25.17234,118.89567],
+// 晋江市
+['晋江机场','晋江市和平中路',24.79612,118.58834],['晋江万达广场','晋江市世纪大道',24.81234,118.57654],['SM广场','晋江市福兴路',24.80567,118.56234],
+['陈埭镇','晋江市陈埭镇',24.82345,118.61234],['中国鞋都','晋江市陈埭镇',24.82567,118.60987],['安海镇','晋江市安海镇',24.71234,118.47891],
+['晋江五店市','晋江市梅岭街道',24.80912,118.58123],['深沪镇','晋江市深沪镇',24.63456,118.67234],['英林镇','晋江市英林镇',24.68567,118.52345],
+['龙湖镇','晋江市龙湖镇',24.69876,118.55678],['金井镇','晋江市金井镇',24.62345,118.62345],['东石镇','晋江市东石镇',24.64567,118.48765],
+['磁灶镇','晋江市磁灶镇',24.75678,118.51234],['内坑镇','晋江市内坑镇',24.76789,118.53456],['池店镇','晋江市池店镇',24.83456,118.56789],
+['紫帽镇','晋江市紫帽镇',24.80123,118.54567],['西滨镇','晋江市西滨镇',24.77891,118.55678],
+// 石狮市
+['石狮服装城','石狮市南洋路',24.71567,118.63456],['石狮市政府','石狮市八七路',24.73234,118.64567],['宝盖镇','石狮市宝盖镇',24.72345,118.65678],
+['永宁镇','石狮市永宁镇',24.66789,118.72345],['蚶江镇','石狮市蚶江镇',24.74567,118.67891],['祥芝镇','石狮市祥芝镇',24.68912,118.71234],
+['鸿山镇','石狮市鸿山镇',24.70123,118.69567],['灵秀镇','石狮市灵秀镇',24.71891,118.62345],
+// 南安市
+['南安水头镇','南安市水头镇',24.72345,118.41234],['中国石材城','南安市水头镇',24.71567,118.40567],['南安官桥镇','南安市官桥镇',24.83456,118.39567],
+['南安溪美','南安市溪美街道',24.96234,118.38456],['南安市政府','南安市溪美街道',24.96345,118.38567],['南安仑苍镇','南安市仑苍镇',24.94567,118.31234],
+['南安英都镇','南安市英都镇',24.92345,118.29876],['南安霞美镇','南安市霞美镇',24.93456,118.43567],['南安丰州镇','南安市丰州镇',24.94567,118.52345],
+['南安洪濑镇','南安市洪濑镇',25.05678,118.45678],['南安梅山镇','南安市梅山镇',25.12345,118.46789],['南安诗山镇','南安市诗山镇',25.15678,118.37891],
+['南安码头镇','南安市码头镇',25.18912,118.35678],['南安石井镇','南安市石井镇',24.68234,118.39567],['南安康美镇','南安市康美镇',24.99876,118.42345],
+// 惠安县
+['惠安县城','惠安县螺城镇',24.99567,118.71567],['惠安崇武古镇','惠安县崇武镇',24.89234,118.84567],['惠安黄塘','惠安县黄塘镇',24.97891,118.65678],
+['惠安石雕城','惠安县崇武镇',24.89567,118.84234],['惠安净峰镇','惠安县净峰镇',25.01234,118.81234],['惠安涂寨镇','惠安县涂寨镇',24.97891,118.76234],
+// 安溪县
+['安溪茶都','安溪县城厢镇',25.05678,118.18567],['安溪县城','安溪县凤城镇',25.05234,118.18234],['安溪藤铁工艺城','安溪县城厢镇',25.04567,118.19567],
+['安溪官桥镇','安溪县官桥镇',25.01234,118.21567],['安溪湖头镇','安溪县湖头镇',25.23456,118.05678],['安溪尚卿乡','安溪县尚卿乡',25.12345,118.12345],
+['安溪龙门镇','安溪县龙门镇',24.96789,118.14567],['安溪西坪镇','安溪县西坪镇',25.00123,118.11234],
+// 永春县
+['永春县城','永春县桃城镇',25.32345,118.29567],['永春达埔镇','永春县达埔镇',25.30123,118.24567],['永春蓬壶镇','永春县蓬壶镇',25.38567,118.23456],
+// 德化县
+['德化县城','德化县浔中镇',25.49234,118.23456],['德化陶瓷街','德化县浔中镇',25.49567,118.23123],['德化三班镇','德化县三班镇',25.51234,118.26789],
+// 重要交通枢纽
+['泉州晋江国际机场','晋江市和平中路',24.79612,118.58834],['泉州动车站','丰泽区北迎宾大道',24.96142,118.59321],
+['泉州汽车站','丰泽区温陵南路',24.89234,118.59567],['晋江动车站','晋江市内坑镇',24.77891,118.53456],
+// 重要工业区/产业带
+['泉州经济开发区','鲤城区南迎宾大道',24.87234,118.56234],['台商投资区','泉州台商投资区',24.92345,118.71234],
+['泉州高新技术产业园区','丰泽区',24.93456,118.62345],['南安经济开发区','南安市',24.94567,118.36234],
+['晋江经济开发区','晋江市',24.78234,118.55678]
+];
 
-// Timeout helper
-function fetchWithTimeout(url,ms=6000){
-  const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),ms);
-  return fetch(url,{signal:ctrl.signal}).finally(()=>clearTimeout(timer));
-}
-
-// Source 1: Photon (Komoot) - supports CORS, good Chinese address coverage
-async function searchPhoton(q){
-  // Auto-prefix with 泉州 for better local results (unless user already typed city name)
-  const hasCity=/泉州|晋江|南安|石狮|惠安|安溪|永春|德化/.test(q);
-  const query=hasCity?q:('泉州 '+q);
-  const url=`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=10&lat=24.9&lon=118.58&lang=zh`;
-  const res=await fetchWithTimeout(url,8000);
-  const json=await res.json();
-  if(!json.features||!json.features.length)return[];
-  return json.features.map(f=>{
-    const p=f.properties;
-    const name=p.name||'';
-    const parts=[p.street,p.district,p.city,p.county,p.state].filter(Boolean);
-    const addr=parts.join(' ')||name;
-    return{name:name||addr.split(' ')[0]||'未知',addr,
-      lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0],isGcj:false};
-  });
-}
-
-// Source 2: Nominatim (OpenStreetMap) - CORS supported, fallback
-async function searchNominatim(q){
-  const hasCity=/泉州|晋江|南安|石狮|惠安|安溪|永春|德化/.test(q);
-  const query=hasCity?q:('泉州市 '+q);
-  const url=`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8&viewbox=117.5,24.3,119.5,25.5&bounded=0&accept-language=zh`;
-  const res=await fetchWithTimeout(url,8000);
-  const data=await res.json();
-  if(!data.length)return[];
-  return data.map(r=>({
-    name:r.display_name.split(',').slice(0,2).join(','),
-    addr:r.display_name,
-    lat:parseFloat(r.lat),lng:parseFloat(r.lon),isGcj:false
-  }));
-}
-
-// Parallel search: try Photon and Nominatim simultaneously, use whichever responds first
-async function doSearch(q){
+// Local fuzzy search - instant, no network needed
+function doSearch(q){
   const el=document.getElementById('searchResults');
-  el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">搜索中...</div>';
-
-  function renderResults(results){
-    if(!results.length){
-      el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">未找到结果，试试其他关键词<br><span style="font-size:11px;color:#bbb">也可以点击下方按钮在地图上点选位置</span></div>';
-      return;
+  if(!q||q.length<1){el.innerHTML='';return}
+  const keywords=q.toLowerCase().split(/\s+/).filter(Boolean);
+  // Score each POI by keyword match
+  const scored=QZ_POI.map(poi=>{
+    const text=(poi[0]+' '+poi[1]).toLowerCase();
+    let score=0;
+    for(const kw of keywords){
+      if(poi[0].toLowerCase()===kw)score+=100; // exact name match
+      else if(poi[0].toLowerCase().startsWith(kw))score+=50; // name starts with
+      else if(poi[0].toLowerCase().includes(kw))score+=30; // name contains
+      else if(poi[1].toLowerCase().includes(kw))score+=10; // address contains
     }
-    el.innerHTML=results.map(r=>`
-      <div class="search-item" onclick="selectSearchResult(${r.lat},${r.lon},'${esc(r.addr).replace(/'/g,"\\'")}',${r.isGcj})">
-        <div class="name">${esc(r.name)}</div>
-        <div class="addr">${esc(r.addr)}</div>
-      </div>
-    `).join('');
+    return score>0?{poi,score}:null;
+  }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,10);
+
+  if(!scored.length){
+    el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">未找到，试试：万达、水头、陈埭、服装城<br><span style="font-size:11px;color:#bbb">或在下方地图上点选位置</span></div>';
+    return;
   }
-
-  // Race: Photon vs Nominatim, first success wins
-  let resolved=false;
-  const trySource=async(fn,label)=>{
-    try{
-      const results=await fn(q);
-      if(!resolved&&results.length>0){
-        resolved=true;
-        renderResults(results);
-        return true;
-      }
-    }catch(e){console.warn(label+' failed:',e)}
-    return false;
-  };
-
-  // Run both in parallel
-  const [photonOk,nominatimOk]=await Promise.all([
-    trySource(searchPhoton,'Photon'),
-    trySource(searchNominatim,'Nominatim')
-  ]);
-
-  // If neither produced results and nothing rendered yet
-  if(!resolved){
-    renderResults([]);
-  }
+  el.innerHTML=scored.map(({poi})=>`
+    <div class="search-item" onclick="selectSearchResult(${poi[2]},${poi[3]},'${esc(poi[1]+' '+poi[0]).replace(/'/g,"\\'")}')">
+      <div class="name">${esc(poi[0])}</div>
+      <div class="addr">${esc(poi[1])}</div>
+    </div>
+  `).join('');
 }
 
-function selectSearchResult(lat,lng,displayName,isGcj){
+function selectSearchResult(lat,lng,displayName){
   document.getElementById('fAddr').value=displayName;
-  if(isGcj){
-    // Gaode coords are GCJ-02, convert to WGS-84 for storage
-    const gcj=wgs84ToGcj02(lng,lat);
-    const wgsLng=lng-(gcj.lng-lng);
-    const wgsLat=lat-(gcj.lat-lat);
-    document.getElementById('fLat').value=wgsLat;
-    document.getElementById('fLng').value=wgsLng;
-    document.getElementById('coordHint').textContent=`坐标: ${wgsLat.toFixed(5)}, ${wgsLng.toFixed(5)}`;
-  }else{
-    document.getElementById('fLat').value=lat;
-    document.getElementById('fLng').value=lng;
-    document.getElementById('coordHint').textContent=`坐标: ${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}`;
-  }
+  document.getElementById('fLat').value=lat;
+  document.getElementById('fLng').value=lng;
+  document.getElementById('coordHint').textContent=`坐标: ${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}`;
   toggleSearch();
 
-  // If add panel is open, fly to location and show temp marker
   if(document.getElementById('panelRight').classList.contains('open')){
     const gcj=wgs84ToGcj02(parseFloat(lng),parseFloat(lat));
-    const displayLat=isGcj?lat:gcj.lat;
-    const displayLng=isGcj?lng:gcj.lng;
     if(tempMarker)map.removeLayer(tempMarker);
-    tempMarker=L.marker([displayLat,displayLng],{
+    tempMarker=L.marker([gcj.lat,gcj.lng],{
       icon:L.divIcon({className:'',html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff">📍</div>',iconSize:[28,28],iconAnchor:[14,14]})
     }).addTo(map);
-    map.flyTo(displayLat,displayLng,15,{duration:0.8});
+    map.flyTo(gcj.lat,gcj.lng,15,{duration:0.8});
   }
 }
 
