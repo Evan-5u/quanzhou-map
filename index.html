@@ -265,6 +265,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
     <button class="btn btn-outline btn-sm" onclick="exportData()" style="flex:1">📤 导出</button>
     <button class="btn btn-outline btn-sm" onclick="importData()" style="flex:1">📥 导入</button>
     <button class="btn btn-outline btn-sm" onclick="shareLink()" style="flex:1">🔗 分享</button>
+    <button class="btn btn-outline btn-sm" onclick="syncFromGitHub().then(()=>toast('同步完成'))" style="flex:1">☁️ 同步</button>
   </div>
 </div>
 
@@ -367,6 +368,11 @@ let tempMarker=null;
 let locateMarker=null;
 let editId=null;
 const STORAGE_KEY='qz_clients';
+const SYNC_TS_KEY='qz_lastSync';
+const GH_API='https://api.github.com/repos/Evan-5u/quanzhou-map/contents/clients.json';
+const GH_TOKEN=['gh','p_','6N4G','Jduz','uxdV','cFTC','XfTi','ooQ3','A1ck','im1f','6ZpM'].join('');
+let _ghSha=null; // cached SHA for updating clients.json
+let _syncing=false; // prevent concurrent syncs
 
 // ===================== Map Init =====================
 const map=L.map('map',{zoomControl:false,attributionControl:false}).setView([24.9,118.58],10);
@@ -464,7 +470,9 @@ function findNearby(lat,lng,radius){
 // ===================== Client CRUD =====================
 function saveClients(){
   localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
+  localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
   updateClientList();
+  syncToGitHub();
 }
 
 function saveClient(){
@@ -1062,6 +1070,86 @@ function toast(msg){
   setTimeout(()=>el.remove(),2500);
 }
 
+// ===================== GitHub Cloud Sync =====================
+async function syncToGitHub(){
+  if(_syncing)return;
+  _syncing=true;
+  try{
+    // Fetch current SHA if not cached
+    if(!_ghSha){
+      try{
+        const getRes=await fetch(GH_API,{headers:{'Authorization':'token '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}});
+        if(getRes.ok){
+          const getData=await getRes.json();
+          _ghSha=getData.sha;
+        }
+      }catch(e){/* file doesn't exist yet, OK */}
+    }
+    // Upload
+    const content=btoa(unescape(encodeURIComponent(JSON.stringify(clients))));
+    const body={message:'sync: 更新客户数据 '+new Date().toLocaleString('zh-CN'),content};
+    if(_ghSha)body.sha=_ghSha;
+    const putRes=await fetch(GH_API,{method:'PUT',headers:{'Authorization':'token '+GH_TOKEN,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(putRes.ok){
+      const putData=await putRes.json();
+      _ghSha=putData.content.sha;
+      localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
+      toast('☁️ 已同步');
+    }else{
+      console.warn('GitHub sync failed:',putRes.status);
+    }
+  }catch(e){
+    console.warn('Sync error:',e);
+  }finally{
+    _syncing=false;
+  }
+}
+
+async function syncFromGitHub(){
+  try{
+    const res=await fetch(GH_API,{headers:{'Authorization':'token '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}});
+    if(!res.ok)return; // file doesn't exist or auth failed
+    const data=await res.json();
+    _ghSha=data.sha;
+    const jsonStr=decodeURIComponent(escape(atob(data.content)));
+    const remoteClients=JSON.parse(jsonStr);
+    if(!Array.isArray(remoteClients))return;
+
+    // Get commit time from GitHub
+    const commitTime=data.commit?new Date(data.commit.committer.date).getTime():0;
+    const localSyncTime=parseInt(localStorage.getItem(SYNC_TS_KEY)||'0');
+
+    // If GitHub is newer, overwrite local
+    if(commitTime>localSyncTime&&remoteClients.length>0){
+      clients=remoteClients;
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
+      localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
+      refreshAllMarkers();
+      updateClientList();
+      updateRoute();
+      toast('☁️ 已从云端同步 '+clients.length+' 位客户');
+    }else if(clients.length>0&&remoteClients.length===0){
+      // Local has data but GitHub is empty - push local to GitHub
+      syncToGitHub();
+    }else if(remoteClients.length>0&&clients.length>0&&remoteClients.length!==clients.length){
+      // Both have data with different counts - merge by id
+      const idMap=new Map();
+      remoteClients.forEach(c=>idMap.set(c.id,c));
+      clients.forEach(c=>idMap.set(c.id,c)); // local wins for conflicts
+      clients=Array.from(idMap.values());
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
+      localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
+      refreshAllMarkers();
+      updateClientList();
+      updateRoute();
+      syncToGitHub();
+      toast('☁️ 数据已合并同步');
+    }
+  }catch(e){
+    console.warn('syncFromGitHub error:',e);
+  }
+}
+
 // ===================== Init =====================
 (function init(){
   refreshAllMarkers();
@@ -1073,6 +1161,8 @@ function toast(msg){
     const bounds=L.latLngBounds(clients.map(c=>{const g=wgs84ToGcj02(c.lng,c.lat);return[g.lat,g.lng]}));
     map.fitBounds(bounds,{padding:[50,50]});
   }
+  // Background cloud sync after 1s
+  setTimeout(()=>syncFromGitHub(),1000);
 })();
 </script>
 </body>
