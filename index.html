@@ -246,7 +246,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
   <div class="search-input">
     <span>🔍</span>
     <input type="text" id="searchInput" placeholder="搜索地址（如：晋江万达）" autocomplete="off">
-    <button class="panel-close" onclick="toggleSearch()">✕</button>
+    <button class="panel-close" onclick="clearSearchMarkers()" title="清除地图标记" style="color:#ff4d4f">⊘</button>
+    <button class="panel-close" onclick="toggleSearch()" title="关闭搜索">✕</button>
   </div>
   <div id="searchResults"></div>
 </div>
@@ -365,6 +366,7 @@ let markers={};
 let routeStops=[];
 let routeLayer=null;
 let tempMarker=null;
+let searchMarkers=[]; // persistent search markers array
 let locateMarker=null;
 let editId=null;
 const STORAGE_KEY='qz_clients';
@@ -536,6 +538,12 @@ function deleteClient(id){
   saveClients();
   updateRoute();
   toast('已删除');
+}
+
+function clearSearchMarkers(){
+  searchMarkers.forEach(m=>map.removeLayer(m));
+  searchMarkers=[];
+  if(tempMarker){map.removeLayer(tempMarker);tempMarker=null}
 }
 
 function resetForm(){
@@ -771,34 +779,35 @@ function doSearch(q){
 function selectSearchResult(lat,lng,displayName,isGcj){
   let wgsLat,wgsLng,gcjLat,gcjLng;
   if(isGcj){
-    // Input is GCJ-02 (from AMap), convert to WGS-84 for storage
     const wgs=gcj02ToWgs84(parseFloat(lng),parseFloat(lat));
     wgsLat=wgs.lat;wgsLng=wgs.lng;
     gcjLat=parseFloat(lat);gcjLng=parseFloat(lng);
   }else{
-    // Input is WGS-84 (from local POI), convert to GCJ-02 for map display
     wgsLat=parseFloat(lat);wgsLng=parseFloat(lng);
     const gcj=wgs84ToGcj02(parseFloat(lng),parseFloat(lat));
     gcjLat=gcj.lat;gcjLng=gcj.lng;
   }
 
+  // Fill form address fields
   document.getElementById('fAddr').value=displayName;
   document.getElementById('fLat').value=wgsLat;
   document.getElementById('fLng').value=wgsLng;
   document.getElementById('coordHint').textContent=`坐标: ${wgsLat.toFixed(5)}, ${wgsLng.toFixed(5)}`;
-  toggleSearch();
 
-  // Fly to location on map (using GCJ-02 coords)
-  if(tempMarker)map.removeLayer(tempMarker);
-  tempMarker=L.marker([gcjLat,gcjLng],{
+  // Close search box
+  document.getElementById('searchBox').classList.remove('open');
+
+  // Add persistent search marker (don't remove old ones)
+  const marker=L.marker([gcjLat,gcjLng],{
     icon:L.divIcon({className:'',html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff">📍</div>',iconSize:[28,28],iconAnchor:[14,14]})
   }).addTo(map);
+  searchMarkers.push(marker);
   map.flyTo(gcjLat,gcjLng,15,{duration:0.8});
 
-  // Open add panel so user sees filled form
-  if(!document.getElementById('panelRight').classList.contains('open')){
-    togglePanel('panelRight');
-  }
+  // Force-open add panel (close other panels first, then open panelRight)
+  closeAllPanels();
+  document.getElementById('panelRight').classList.add('open');
+  document.getElementById('overlay').classList.add('show');
 }
 
 // ===================== Map Click to Place =====================
