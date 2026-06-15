@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>泉州客户拜访地图</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --primary:#1677ff;--primary-light:#e6f4ff;--primary-dark:#0958d9;
+  --danger:#ff4d4f;--success:#52c41a;--warning:#faad14;
+  --bg:#f5f5f5;--card:#fff;--text:#262626;--text2:#595959;--text3:#8c8c8c;
+  --border:#f0f0f0;--shadow:0 2px 8px rgba(0,0,0,.12);
+  --radius:10px;--header-h:52px;
+}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;color:var(--text);overflow:hidden}
+#map{position:absolute;top:var(--header-h);left:0;right:0;bottom:0;z-index:1}
+
+/* ===== Header ===== */
+#header{
+  position:fixed;top:0;left:0;right:0;height:var(--header-h);z-index:1000;
+  background:var(--primary);color:#fff;display:flex;align-items:center;padding:0 12px;gap:8px;
+  box-shadow:0 1px 4px rgba(0,0,0,.15)
+}
+#header h1{font-size:16px;font-weight:600;white-space:nowrap}
+#header .btn-icon{
+  width:36px;height:36px;border:none;background:rgba(255,255,255,.18);
+  border-radius:8px;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center
+}
+#header .btn-icon:active{background:rgba(255,255,255,.3)}
+.spacer{flex:1}
+
+/* ===== Panels ===== */
+.panel{
+  position:fixed;z-index:1001;background:var(--card);
+  transition:transform .3s cubic-bezier(.4,0,.2,1);
+  overflow:hidden;display:flex;flex-direction:column
+}
+/* Left panel - client list */
+#panelLeft{
+  top:var(--header-h);left:0;bottom:0;width:320px;max-width:85vw;
+  transform:translateX(-100%);box-shadow:2px 0 12px rgba(0,0,0,.1)
+}
+#panelLeft.open{transform:translateX(0)}
+/* Right panel - add client */
+#panelRight{
+  top:var(--header-h);right:0;bottom:0;width:360px;max-width:90vw;
+  transform:translateX(100%);box-shadow:-2px 0 12px rgba(0,0,0,.1)
+}
+#panelRight.open{transform:translateX(0)}
+/* Bottom panel - route */
+#panelBottom{
+  left:0;right:0;bottom:0;max-height:45vh;
+  transform:translateY(100%);border-radius:16px 16px 0 0;box-shadow:0 -2px 12px rgba(0,0,0,.12)
+}
+#panelBottom.open{transform:translateY(0)}
+
+.panel-header{
+  padding:14px 16px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;flex-shrink:0
+}
+.panel-header h2{font-size:15px;font-weight:600;flex:1}
+.panel-close{
+  width:30px;height:30px;border:none;background:var(--bg);border-radius:50%;
+  font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text2)
+}
+.panel-body{flex:1;overflow-y:auto;padding:12px 16px;-webkit-overflow-scrolling:touch}
+
+/* ===== Client List ===== */
+.client-item{
+  padding:12px;border:1px solid var(--border);border-radius:var(--radius);
+  margin-bottom:8px;cursor:pointer;transition:all .2s
+}
+.client-item:active{background:var(--primary-light);border-color:var(--primary)}
+.client-item .name{font-size:14px;font-weight:600;margin-bottom:4px}
+.client-item .addr{font-size:12px;color:var(--text2);line-height:1.4}
+.client-item .meta{font-size:11px;color:var(--text3);margin-top:4px;display:flex;gap:8px}
+.client-item .actions{display:flex;gap:6px;margin-top:8px}
+.client-item .actions button{
+  padding:4px 10px;font-size:11px;border:1px solid var(--border);
+  border-radius:6px;background:var(--card);cursor:pointer;color:var(--text2)
+}
+.client-item .actions button:hover{border-color:var(--primary);color:var(--primary)}
+.client-item .actions .del:hover{border-color:var(--danger);color:var(--danger)}
+
+/* ===== Form ===== */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:5px;font-weight:500}
+.form-group input,.form-group textarea{
+  width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+  font-size:14px;outline:none;transition:border .2s;font-family:inherit
+}
+.form-group input:focus,.form-group textarea:focus{border-color:var(--primary)}
+.form-group textarea{resize:vertical;min-height:60px}
+.btn{
+  padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:500;
+  cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px
+}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:active{background:var(--primary-dark)}
+.btn-outline{background:transparent;border:1px solid var(--primary);color:var(--primary)}
+.btn-outline:active{background:var(--primary-light)}
+.btn-danger{background:transparent;border:1px solid var(--danger);color:var(--danger)}
+.btn-block{width:100%;justify-content:center}
+.btn-sm{padding:6px 12px;font-size:12px}
+
+/* ===== Search ===== */
+#searchBox{
+  position:fixed;top:calc(var(--header-h) + 10px);left:50%;transform:translateX(-50%);
+  z-index:999;width:calc(100% - 24px);max-width:480px;
+  background:var(--card);border-radius:12px;box-shadow:var(--shadow);
+  display:none;overflow:hidden
+}
+#searchBox.open{display:block}
+#searchBox .search-input{
+  display:flex;align-items:center;padding:10px 14px;gap:8px;border-bottom:1px solid var(--border)
+}
+#searchBox input{flex:1;border:none;outline:none;font-size:15px}
+#searchResults{max-height:240px;overflow-y:auto}
+.search-item{
+  padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);
+  font-size:13px;line-height:1.5
+}
+.search-item:active{background:var(--primary-light)}
+.search-item .name{font-weight:500;color:var(--text)}
+.search-item .addr{color:var(--text3);font-size:12px}
+
+/* ===== Overlay ===== */
+#overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:1000;
+  display:none;opacity:0;transition:opacity .3s
+}
+#overlay.show{display:block;opacity:1}
+
+/* ===== Nearby Popup ===== */
+.nearby-section{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.nearby-section h4{font-size:12px;color:var(--primary);margin-bottom:6px}
+.nearby-item{
+  font-size:12px;padding:4px 0;display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text2)
+}
+.nearby-item:active{color:var(--primary)}
+.nearby-item .dist{color:var(--primary);font-weight:600;min-width:40px}
+
+/* ===== Route Panel ===== */
+.route-stop{
+  display:flex;align-items:center;gap:10px;padding:10px 0;
+  border-bottom:1px solid var(--border)
+}
+.route-stop .idx{
+  width:24px;height:24px;border-radius:50%;background:var(--primary);color:#fff;
+  font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0
+}
+.route-stop .info{flex:1;min-width:0}
+.route-stop .info .n{font-size:13px;font-weight:500}
+.route-stop .info .a{font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.route-stop .remove{color:var(--danger);cursor:pointer;font-size:16px;padding:4px}
+.route-summary{
+  padding:12px 0;border-top:2px solid var(--primary);margin-top:8px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px
+}
+.route-summary .stats{font-size:13px;color:var(--text2)}
+.route-summary .stats strong{color:var(--primary)}
+
+/* ===== FAB ===== */
+.fab{
+  position:fixed;z-index:998;width:48px;height:48px;border-radius:50%;
+  background:var(--primary);color:#fff;border:none;font-size:22px;
+  box-shadow:0 3px 10px rgba(22,119,255,.4);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .2s
+}
+.fab:active{transform:scale(.9)}
+#fabAdd{right:16px;bottom:16px}
+#fabLocate{right:16px;bottom:76px;background:#fff;color:var(--primary);box-shadow:var(--shadow)}
+
+/* ===== Toast ===== */
+.toast{
+  position:fixed;top:calc(var(--header-h) + 16px);left:50%;transform:translateX(-50%);
+  z-index:9999;padding:10px 20px;border-radius:8px;font-size:13px;
+  background:rgba(0,0,0,.75);color:#fff;pointer-events:none;
+  animation:toastIn .3s,toastOut .3s 2s forwards
+}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes toastOut{to{opacity:0;transform:translateX(-50%) translateY(-10px)}}
+
+/* ===== Empty State ===== */
+.empty{text-align:center;padding:40px 20px;color:var(--text3)}
+.empty .icon{font-size:40px;margin-bottom:12px}
+.empty p{font-size:13px;line-height:1.6}
+
+/* ===== Import/Export ===== */
+.ie-section{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0}
+
+/* ===== Custom Marker ===== */
+.custom-marker{
+  background:var(--primary);color:#fff;border-radius:50%;width:32px;height:32px;
+  display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;
+  box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff
+}
+.custom-marker.highlight{background:var(--danger);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,77,79,.5)}50%{box-shadow:0 0 0 10px rgba(255,77,79,0)}}
+
+/* ===== Popup Styling ===== */
+.leaflet-popup-content-wrapper{border-radius:12px;padding:0}
+.leaflet-popup-content{margin:0;min-width:200px}
+.popup-inner{padding:14px}
+.popup-inner h3{font-size:15px;font-weight:600;margin-bottom:4px}
+.popup-inner .p-addr{font-size:12px;color:var(--text2);margin-bottom:4px;line-height:1.4}
+.popup-inner .p-phone{font-size:12px;color:var(--primary);margin-bottom:6px}
+.popup-inner .p-notes{font-size:12px;color:var(--text3);line-height:1.4;margin-bottom:8px}
+.popup-actions{display:flex;gap:6px;flex-wrap:wrap}
+.popup-actions button{
+  padding:5px 12px;font-size:11px;border-radius:6px;border:1px solid var(--border);
+  background:#fff;cursor:pointer;color:var(--text2)
+}
+.popup-actions button:hover{border-color:var(--primary);color:var(--primary)}
+
+/* Desktop adjustments */
+@media(min-width:768px){
+  #panelLeft{width:360px}
+  #panelRight{width:400px}
+  .fab{width:52px;height:52px;font-size:24px}
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div id="header">
+  <button class="btn-icon" onclick="togglePanel('panelLeft')" title="客户列表">☰</button>
+  <h1>泉州客户拜访地图</h1>
+  <div class="spacer"></div>
+  <button class="btn-icon" onclick="toggleSearch()" title="搜索地址">🔍</button>
+  <button class="btn-icon" onclick="togglePanel('panelBottom')" title="路线规划" id="routeBtn">🧭</button>
+</div>
+
+<!-- Search Box -->
+<div id="searchBox">
+  <div class="search-input">
+    <span>🔍</span>
+    <input type="text" id="searchInput" placeholder="搜索地址（如：晋江万达）" autocomplete="off">
+    <button class="panel-close" onclick="toggleSearch()">✕</button>
+  </div>
+  <div id="searchResults"></div>
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Left Panel - Client List -->
+<div id="panelLeft" class="panel">
+  <div class="panel-header">
+    <h2>客户列表 (<span id="clientCount">0</span>)</h2>
+    <button class="panel-close" onclick="togglePanel('panelLeft')">✕</button>
+  </div>
+  <div class="panel-body" id="clientList"></div>
+  <div class="ie-section">
+    <button class="btn btn-outline btn-sm" onclick="exportData()" style="flex:1">📤 导出</button>
+    <button class="btn btn-outline btn-sm" onclick="importData()" style="flex:1">📥 导入</button>
+    <button class="btn btn-outline btn-sm" onclick="shareLink()" style="flex:1">🔗 分享</button>
+  </div>
+</div>
+
+<!-- Right Panel - Add/Edit Client -->
+<div id="panelRight" class="panel">
+  <div class="panel-header">
+    <h2 id="formTitle">添加客户</h2>
+    <button class="panel-close" onclick="togglePanel('panelRight')">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="form-group">
+      <label>客户名称 *</label>
+      <input type="text" id="fName" placeholder="如：华鸿天线">
+    </div>
+    <div class="form-group">
+      <label>详细地址 *</label>
+      <input type="text" id="fAddr" placeholder="如：泉州市南安市霞美镇xxx">
+    </div>
+    <div class="form-group">
+      <label>联系电话</label>
+      <input type="tel" id="fPhone" placeholder="选填">
+    </div>
+    <div class="form-group">
+      <label>行业/产品</label>
+      <input type="text" id="fIndustry" placeholder="选填，如：对讲机天线">
+    </div>
+    <div class="form-group">
+      <label>意向等级</label>
+      <select id="fLevel" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px">
+        <option value="A">A - 高意向</option>
+        <option value="B" selected>B - 中意向</option>
+        <option value="C">C - 待跟进</option>
+        <option value="D">D - 已签约</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>备注</label>
+      <textarea id="fNotes" placeholder="选填，如：老板姓李，周三下午方便"></textarea>
+    </div>
+    <button class="btn btn-primary btn-block" onclick="saveClient()" id="saveBtn">✓ 保存客户</button>
+    <div style="height:12px"></div>
+    <button class="btn btn-outline btn-block" onclick="locateOnMap()" id="locateBtn">📍 在地图上点选位置</button>
+    <input type="hidden" id="fLat">
+    <input type="hidden" id="fLng">
+    <input type="hidden" id="fEditId">
+    <p id="coordHint" style="font-size:11px;color:var(--text3);text-align:center;margin-top:8px"></p>
+  </div>
+</div>
+
+<!-- Bottom Panel - Route Planning -->
+<div id="panelBottom" class="panel">
+  <div class="panel-header">
+    <h2>🧭 路线规划</h2>
+    <button class="panel-close" onclick="togglePanel('panelBottom')">✕</button>
+  </div>
+  <div class="panel-body" id="routeBody">
+    <div class="empty" id="routeEmpty">
+      <div class="icon">🗺️</div>
+      <p>点击客户标记上的「加入路线」<br>添加拜访站点</p>
+    </div>
+    <div id="routeStops"></div>
+    <div id="routeSummary" class="route-summary" style="display:none"></div>
+  </div>
+  <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0">
+    <button class="btn btn-primary" onclick="calcRoute()" id="calcBtn" style="flex:1" disabled>计算路线</button>
+    <button class="btn btn-danger btn-sm" onclick="clearRoute()">清空</button>
+  </div>
+</div>
+
+<!-- Overlay -->
+<div id="overlay" onclick="closeAllPanels()"></div>
+
+<!-- FABs -->
+<button class="fab" id="fabLocate" onclick="locateMe()" title="我的位置">⊙</button>
+<button class="fab" id="fabAdd" onclick="openAddPanel()" title="添加客户">+</button>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ===================== GCJ-02 Coordinate Conversion =====================
+const PI=Math.PI,A=6378245,EE=0.00669342162296594323;
+function outOfChina(lng,lat){return lng<72.004||lng>137.8347||lat<0.8293||lat>55.8271}
+function tLat(x,y){let r=-100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r}
+function tLng(x,y){let r=300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r}
+function wgs84ToGcj02(lng,lat){
+  if(outOfChina(lng,lat))return{lng,lat};
+  let dLat=tLat(lng-105,lat-35),dLng=tLng(lng-105,lat-35);
+  const radLat=lat/180*PI;let magic=Math.sin(radLat);magic=1-EE*magic*magic;
+  const sqrtMagic=Math.sqrt(magic);
+  dLat=(dLat*180)/((A*(1-EE))/(magic*sqrtMagic)*PI);
+  dLng=(dLng*180)/(A/sqrtMagic*Math.cos(radLat)*PI);
+  return{lng:lng+dLng,lat:lat+dLat}
+}
+
+// ===================== State =====================
+let clients=JSON.parse(localStorage.getItem('qz_clients')||'[]');
+let markers={};
+let routeStops=[];
+let routeLayer=null;
+let tempMarker=null;
+let locateMarker=null;
+let editId=null;
+const STORAGE_KEY='qz_clients';
+
+// ===================== Map Init =====================
+const map=L.map('map',{zoomControl:false,attributionControl:false}).setView([24.9,118.58],10);
+L.control.zoom({position:'bottomleft'}).addTo(map);
+L.control.attribution({position:'bottomleft',prefix:false}).addTo(map);
+
+// Gaode tiles (GCJ-02)
+const gaodeLayer=L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{
+  subdomains:['1','2','3','4'],maxZoom:18,minZoom:3,
+  attribution:'© 高德地图'
+});
+// OSM fallback
+const osmLayer=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  subdomains:['a','b','c'],maxZoom:18,
+  attribution:'© OpenStreetMap'
+});
+
+// Try Gaode first, fallback to OSM
+gaodeLayer.on('tileerror',function(){
+  if(!map.hasLayer(osmLayer)){map.removeLayer(gaodeLayer);osmLayer.addTo(map)}
+});
+gaodeLayer.addTo(map);
+
+// ===================== Markers =====================
+function createMarkerIcon(text,highlight){
+  return L.divIcon({
+    className:'',
+    html:`<div class="custom-marker${highlight?' highlight':''}">${text}</div>`,
+    iconSize:[32,32],iconAnchor:[16,16],popupAnchor:[0,-18]
+  })
+}
+
+function levelColor(level){
+  return{A:'#ff4d4f',B:'#faad14',C:'#1677ff',D:'#52c41a'}[level]||'#1677ff'
+}
+
+function addMarker(c){
+  if(markers[c.id])map.removeLayer(markers[c.id]);
+  const gcj=wgs84ToGcj02(c.lng,c.lat);
+  const icon=L.divIcon({
+    className:'',
+    html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff">${c.name.charAt(0)}</div>`,
+    iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
+  });
+  const m=L.marker([gcj.lat,gcj.lng],{icon}).addTo(map);
+  m.bindPopup(()=>buildPopup(c),{maxWidth:280,closeButton:true});
+  m.on('click',()=>{m.openPopup()});
+  markers[c.id]=m;
+}
+
+function buildPopup(c){
+  const nearby=findNearby(c.lat,c.lng,5000).filter(n=>n.id!==c.id).slice(0,5);
+  let html=`<div class="popup-inner">
+    <h3>${esc(c.name)}</h3>
+    <div class="p-addr">📍 ${esc(c.address)}</div>
+    ${c.phone?`<div class="p-phone">📞 <a href="tel:${esc(c.phone)}">${esc(c.phone)}</a></div>`:''}
+    ${c.industry?`<div style="font-size:12px;color:#595959;margin-bottom:4px">🏭 ${esc(c.industry)}</div>`:''}
+    <div style="font-size:11px;margin-bottom:6px"><span style="background:${levelColor(c.level)};color:#fff;padding:1px 8px;border-radius:4px">${c.level}级</span></div>
+    ${c.notes?`<div class="p-notes">📝 ${esc(c.notes)}</div>`:''}
+    <div class="popup-actions">
+      <button onclick="addToRoute('${c.id}')">+ 加入路线</button>
+      <button onclick="editClient('${c.id}')">编辑</button>
+      ${c.phone?`<button onclick="window.location.href='tel:${esc(c.phone)}'">拨号</button>`:''}
+    </div>`;
+  if(nearby.length>0){
+    html+=`<div class="nearby-section"><h4>📍 附近客户 (${nearby.length})</h4>`;
+    nearby.forEach(n=>{
+      const d=haversine(c.lat,c.lng,n.lat,n.lng);
+      html+=`<div class="nearby-item" onclick="flyTo('${n.id}')"><span class="dist">${d<1000?(d|0)+'m':(d/1000).toFixed(1)+'km'}</span>${esc(n.name)}</div>`;
+    });
+    html+=`</div>`;
+  }
+  html+=`</div>`;
+  return html;
+}
+
+function refreshAllMarkers(){
+  Object.values(markers).forEach(m=>map.removeLayer(m));
+  markers={};
+  clients.forEach(c=>addMarker(c));
+}
+
+// ===================== Nearby =====================
+function haversine(lat1,lng1,lat2,lng2){
+  const R=6371000,toRad=d=>d*PI/180;
+  const dLat=toRad(lat2-lat1),dLng=toRad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function findNearby(lat,lng,radius){
+  return clients.map(c=>({...c,_dist:haversine(lat,lng,c.lat,c.lng)}))
+    .filter(c=>c._dist<=radius).sort((a,b)=>a._dist-b._dist);
+}
+
+// ===================== Client CRUD =====================
+function saveClients(){
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
+  updateClientList();
+}
+
+function saveClient(){
+  const name=document.getElementById('fName').value.trim();
+  const addr=document.getElementById('fAddr').value.trim();
+  const lat=parseFloat(document.getElementById('fLat').value);
+  const lng=parseFloat(document.getElementById('fLng').value);
+  if(!name)return toast('请输入客户名称');
+  if(!addr)return toast('请输入详细地址');
+  if(isNaN(lat)||isNaN(lng))return toast('请先搜索地址或在地图上点选位置');
+
+  const eid=document.getElementById('fEditId').value;
+  const data={
+    id:eid||Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    name,address:addr,
+    phone:document.getElementById('fPhone').value.trim(),
+    industry:document.getElementById('fIndustry').value.trim(),
+    level:document.getElementById('fLevel').value,
+    notes:document.getElementById('fNotes').value.trim(),
+    lat,lng
+  };
+
+  if(eid){
+    const idx=clients.findIndex(c=>c.id===eid);
+    if(idx>=0)clients[idx]=data;
+  }else{
+    clients.push(data);
+  }
+  saveClients();
+  addMarker(data);
+  map.flyTo(wgs84ToGcj02(lng,lat).lat,wgs84ToGcj02(lng,lat).lng,15,{duration:0.8});
+  togglePanel('panelRight');
+  resetForm();
+  toast(eid?'客户已更新':'客户已添加');
+}
+
+function editClient(id){
+  const c=clients.find(x=>x.id===id);
+  if(!c)return;
+  map.closePopup();
+  document.getElementById('formTitle').textContent='编辑客户';
+  document.getElementById('fName').value=c.name;
+  document.getElementById('fAddr').value=c.address;
+  document.getElementById('fPhone').value=c.phone||'';
+  document.getElementById('fIndustry').value=c.industry||'';
+  document.getElementById('fLevel').value=c.level;
+  document.getElementById('fNotes').value=c.notes||'';
+  document.getElementById('fLat').value=c.lat;
+  document.getElementById('fLng').value=c.lng;
+  document.getElementById('fEditId').value=c.id;
+  document.getElementById('coordHint').textContent=`坐标: ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
+  document.getElementById('saveBtn').textContent='✓ 更新客户';
+  togglePanel('panelRight');
+}
+
+function deleteClient(id){
+  if(!confirm('确定删除该客户？'))return;
+  if(markers[id]){map.removeLayer(markers[id]);delete markers[id]}
+  clients=clients.filter(c=>c.id!==id);
+  routeStops=routeStops.filter(s=>s!==id);
+  saveClients();
+  updateRoute();
+  toast('已删除');
+}
+
+function resetForm(){
+  ['fName','fAddr','fPhone','fIndustry','fNotes','fLat','fLng','fEditId'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('fLevel').value='B';
+  document.getElementById('formTitle').textContent='添加客户';
+  document.getElementById('saveBtn').textContent='✓ 保存客户';
+  document.getElementById('coordHint').textContent='';
+  if(tempMarker){map.removeLayer(tempMarker);tempMarker=null}
+}
+
+// ===================== UI =====================
+function updateClientList(){
+  const el=document.getElementById('clientList');
+  document.getElementById('clientCount').textContent=clients.length;
+  if(clients.length===0){
+    el.innerHTML=`<div class="empty"><div class="icon">📋</div><p>暂无客户<br>点击右下角 + 添加第一个客户</p></div>`;
+    return;
+  }
+  // Sort: A > B > C > D, then by name
+  const order={A:0,B:1,C:2,D:3};
+  const sorted=[...clients].sort((a,b)=>(order[a.level]||9)-(order[b.level]||9)||a.name.localeCompare(b.name,'zh'));
+  el.innerHTML=sorted.map(c=>`
+    <div class="client-item" onclick="flyTo('${c.id}')">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="background:${levelColor(c.level)};color:#fff;padding:1px 8px;border-radius:4px;font-size:11px">${c.level}</span>
+        <div class="name">${esc(c.name)}</div>
+      </div>
+      <div class="addr">${esc(c.address)}</div>
+      <div class="meta">
+        ${c.phone?`<span>📞 ${esc(c.phone)}</span>`:''}
+        ${c.industry?`<span>🏭 ${esc(c.industry)}</span>`:''}
+      </div>
+      <div class="actions">
+        <button onclick="event.stopPropagation();addToRoute('${c.id}')">+ 路线</button>
+        <button onclick="event.stopPropagation();editClient('${c.id}')">编辑</button>
+        ${c.phone?`<button onclick="event.stopPropagation();window.location.href='tel:${esc(c.phone)}'">拨号</button>`:''}
+        <button class="del" onclick="event.stopPropagation();deleteClient('${c.id}')">删除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function flyTo(id){
+  const c=clients.find(x=>x.id===id);
+  if(!c)return;
+  closeAllPanels();
+  const gcj=wgs84ToGcj02(c.lng,c.lat);
+  map.flyTo(gcj.lat,gcj.lng,16,{duration:0.8});
+  setTimeout(()=>{if(markers[id])markers[id].openPopup()},800);
+}
+
+function togglePanel(id){
+  const el=document.getElementById(id);
+  const isOpen=el.classList.contains('open');
+  closeAllPanels();
+  if(!isOpen){
+    el.classList.add('open');
+    document.getElementById('overlay').classList.add('show');
+  }
+}
+
+function closeAllPanels(){
+  ['panelLeft','panelRight','panelBottom'].forEach(id=>document.getElementById(id).classList.remove('open'));
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('searchBox').classList.remove('open');
+}
+
+function openAddPanel(){
+  resetForm();
+  togglePanel('panelRight');
+}
+
+// ===================== Search (Nominatim) =====================
+let searchTimer=null;
+function toggleSearch(){
+  const box=document.getElementById('searchBox');
+  box.classList.toggle('open');
+  if(box.classList.contains('open')){
+    document.getElementById('searchInput').value='';
+    document.getElementById('searchInput').focus();
+    document.getElementById('searchResults').innerHTML='';
+  }
+}
+
+document.getElementById('searchInput').addEventListener('input',function(){
+  clearTimeout(searchTimer);
+  const q=this.value.trim();
+  if(q.length<2){document.getElementById('searchResults').innerHTML='';return}
+  searchTimer=setTimeout(()=>doSearch(q),500);
+});
+
+async function doSearch(q){
+  const el=document.getElementById('searchResults');
+  el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">搜索中...</div>';
+  try{
+    // Bias towards Quanzhou area
+    const url=`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=8&viewbox=117.5,24.3,119.5,25.5&bounded=0&accept-language=zh`;
+    const res=await fetch(url);
+    const data=await res.json();
+    if(!data.length){
+      el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">未找到结果，试试其他关键词</div>';
+      return;
+    }
+    el.innerHTML=data.map((r,i)=>`
+      <div class="search-item" onclick="selectSearchResult(${r.lat},${r.lon},'${esc(r.display_name)}')">
+        <div class="name">${esc(r.display_name.split(',').slice(0,2).join(','))}</div>
+        <div class="addr">${esc(r.display_name)}</div>
+      </div>
+    `).join('');
+  }catch(e){
+    el.innerHTML='<div style="padding:12px;text-align:center;color:#ff4d4f;font-size:13px">搜索失败，请稍后重试</div>';
+  }
+}
+
+function selectSearchResult(lat,lng,displayName){
+  document.getElementById('fAddr').value=displayName;
+  // Convert from WGS-84 to display, but store WGS-84
+  document.getElementById('fLat').value=lat;
+  document.getElementById('fLng').value=lng;
+  document.getElementById('coordHint').textContent=`坐标: ${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}`;
+  toggleSearch();
+
+  // If add panel is open, fly to location and show temp marker
+  if(document.getElementById('panelRight').classList.contains('open')){
+    const gcj=wgs84ToGcj02(parseFloat(lng),parseFloat(lat));
+    if(tempMarker)map.removeLayer(tempMarker);
+    tempMarker=L.marker([gcj.lat,gcj.lng],{
+      icon:L.divIcon({className:'',html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff">📍</div>',iconSize:[28,28],iconAnchor:[14,14]})
+    }).addTo(map);
+    map.flyTo(gcj.lat,gcj.lng,15,{duration:0.8});
+  }
+}
+
+// ===================== Map Click to Place =====================
+let pickMode=false;
+function locateOnMap(){
+  pickMode=true;
+  togglePanel('panelRight');
+  toast('点击地图上的位置来设置客户坐标');
+  document.getElementById('coordHint').textContent='👆 请在地图上点击目标位置';
+}
+
+map.on('click',function(e){
+  if(!pickMode)return;
+  pickMode=false;
+  // e.latlng is in the map's CRS (GCJ-02 for Gaode tiles)
+  // We need to convert back to WGS-84 for storage
+  // Simple approach: store the clicked coords as-is (they're in GCJ-02)
+  // For better accuracy, we'd convert GCJ-02 → WGS-84, but the offset is small
+  const lat=e.latlng.lat;
+  const lng=e.latlng.lng;
+
+  // Rough GCJ-02 to WGS-84 inverse (iterate once)
+  const gcj=wgs84ToGcj02(lng,lat);
+  const wgsLng=lng-(gcj.lng-lng);
+  const wgsLat=lat-(gcj.lat-lat);
+
+  document.getElementById('fLat').value=wgsLat;
+  document.getElementById('fLng').value=wgsLng;
+  document.getElementById('coordHint').textContent=`坐标: ${wgsLat.toFixed(5)}, ${wgsLng.toFixed(5)}`;
+
+  if(tempMarker)map.removeLayer(tempMarker);
+  tempMarker=L.marker([lat,lng],{
+    icon:L.divIcon({className:'',html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff">📍</div>',iconSize:[28,28],iconAnchor:[14,14]})
+  }).addTo(map);
+
+  togglePanel('panelRight');
+  toast('坐标已设置');
+});
+
+// ===================== Route Planning =====================
+function addToRoute(id){
+  if(routeStops.includes(id)){toast('该客户已在路线中');return}
+  routeStops.push(id);
+  updateRoute();
+  toast('已加入路线');
+  map.closePopup();
+}
+
+function removeFromRoute(id){
+  routeStops=routeStops.filter(s=>s!==id);
+  updateRoute();
+}
+
+function clearRoute(){
+  routeStops=[];
+  if(routeLayer){map.removeLayer(routeLayer);routeLayer=null}
+  updateRoute();
+}
+
+function updateRoute(){
+  const empty=document.getElementById('routeEmpty');
+  const stopsEl=document.getElementById('routeStops');
+  const summaryEl=document.getElementById('routeSummary');
+  const calcBtn=document.getElementById('calcBtn');
+  const routeBtn=document.getElementById('routeBtn');
+
+  if(routeStops.length===0){
+    empty.style.display='';
+    stopsEl.innerHTML='';
+    summaryEl.style.display='none';
+    calcBtn.disabled=true;
+    routeBtn.textContent='🧭';
+    return;
+  }
+
+  empty.style.display='none';
+  calcBtn.disabled=routeStops.length<2;
+  routeBtn.textContent=`🧭(${routeStops.length})`;
+
+  stopsEl.innerHTML=routeStops.map((id,i)=>{
+    const c=clients.find(x=>x.id===id);
+    if(!c)return'';
+    return`<div class="route-stop">
+      <div class="idx">${i+1}</div>
+      <div class="info"><div class="n">${esc(c.name)}</div><div class="a">${esc(c.address)}</div></div>
+      <div class="remove" onclick="removeFromRoute('${id}')">✕</div>
+    </div>`;
+  }).join('');
+}
+
+async function calcRoute(){
+  if(routeStops.length<2)return toast('至少需要2个站点');
+  const pts=routeStops.map(id=>{
+    const c=clients.find(x=>x.id===id);
+    if(!c)return null;
+    const gcj=wgs84ToGcj02(c.lng,c.lat);
+    return{lng:gcj.lng,lat:gcj.lat};
+  }).filter(Boolean);
+  if(pts.length<2)return;
+
+  document.getElementById('calcBtn').textContent='计算中...';
+  document.getElementById('calcBtn').disabled=true;
+
+  try{
+    const coords=pts.map(p=>`${p.lng},${p.lat}`).join(';');
+    const url=`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+    const res=await fetch(url);
+    const data=await res.json();
+    if(data.code!=='Ok')throw new Error('Route calculation failed');
+
+    const route=data.routes[0];
+    if(routeLayer)map.removeLayer(routeLayer);
+
+    // OSRM returns WGS-84, convert to GCJ-02 for display on Gaode tiles
+    const gcjCoords=route.geometry.coordinates.map(([lng,lat])=>{
+      const g=wgs84ToGcj02(lng,lat);
+      return[g.lat,g.lng];
+    });
+
+    routeLayer=L.polyline(gcjCoords,{color:'#1677ff',weight:5,opacity:0.7}).addTo(map);
+    map.fitBounds(routeLayer.getBounds(),{padding:[60,60]});
+
+    const distKm=(route.distance/1000).toFixed(1);
+    const durMin=Math.round(route.duration/60);
+    const summaryEl=document.getElementById('routeSummary');
+    summaryEl.style.display='flex';
+    summaryEl.innerHTML=`
+      <div class="stats">总距离 <strong>${distKm} km</strong> · 预计 <strong>${durMin} 分钟</strong></div>
+      <button class="btn btn-primary btn-sm" onclick="openNavigation()">开始导航</button>
+    `;
+  }catch(e){
+    toast('路线计算失败，请检查网络');
+    console.error(e);
+  }finally{
+    document.getElementById('calcBtn').textContent='计算路线';
+    document.getElementById('calcBtn').disabled=routeStops.length<2;
+  }
+}
+
+function openNavigation(){
+  if(routeStops.length<2)return;
+  // Open Gaode navigation in new tab (works on mobile)
+  const pts=routeStops.map(id=>{
+    const c=clients.find(x=>x.id===id);
+    if(!c)return null;
+    return{name:c.name,lat:c.lat,lng:c.lng};
+  }).filter(Boolean);
+  if(pts.length<2)return;
+
+  // Gaode nav URL: from first to last, via middle points
+  const from=pts[0],to=pts[pts.length-1];
+  const via=pts.slice(1,-1);
+  let url=`https://uri.amap.com/navigation?from=${from.lng},${from.lat},${encodeURIComponent(from.name)}&to=${to.lng},${to.lat},${encodeURIComponent(to.name)}&mode=car`;
+  if(via.length>0){
+    url+='&via='+via.map(v=>`${v.lng},${v.lat},${encodeURIComponent(v.name)}`).join('|');
+  }
+  window.open(url,'_blank');
+}
+
+// ===================== Geolocation =====================
+function locateMe(){
+  if(!navigator.geolocation)return toast('浏览器不支持定位');
+  toast('正在获取位置...');
+  navigator.geolocation.getCurrentPosition(
+    pos=>{
+      const gcj=wgs84ToGcj02(pos.coords.longitude,pos.coords.latitude);
+      if(locateMarker)map.removeLayer(locateMarker);
+      locateMarker=L.marker([gcj.lat,gcj.lng],{
+        icon:L.divIcon({className:'',html:'<div style="background:#fff;border:3px solid #1677ff;border-radius:50%;width:20px;height:20px;box-shadow:0 0 0 6px rgba(22,119,255,.2)"></div>',iconSize:[20,20],iconAnchor:[10,10]})
+      }).addTo(map);
+      map.flyTo(gcj.lat,gcj.lng,15,{duration:0.8});
+      toast('已定位到当前位置');
+    },
+    err=>toast('定位失败: '+err.message),
+    {enableHighAccuracy:true,timeout:10000}
+  );
+}
+
+// ===================== Import/Export/Share =====================
+function exportData(){
+  const blob=new Blob([JSON.stringify(clients,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=`泉州客户数据_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();URL.revokeObjectURL(url);
+  toast('数据已导出');
+}
+
+function importData(){
+  const input=document.createElement('input');
+  input.type='file';input.accept='.json';
+  input.onchange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        if(!Array.isArray(data))throw new Error();
+        const count=data.length;
+        if(confirm(`将导入 ${count} 个客户，是否覆盖现有数据？\n取消则追加到现有数据。`)){
+          clients=data;
+        }else{
+          // Append, avoiding duplicates by id
+          const ids=new Set(clients.map(c=>c.id));
+          data.forEach(c=>{if(!ids.has(c.id))clients.push({...c,id:Date.now().toString(36)+Math.random().toString(36).slice(2,6)})});
+        }
+        saveClients();
+        refreshAllMarkers();
+        toast(`已导入 ${count} 个客户`);
+      }catch{toast('文件格式错误')}
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function shareLink(){
+  if(clients.length===0)return toast('暂无客户数据');
+  // Encode clients into URL hash
+  const encoded=clients.map(c=>
+    [c.name,c.address,c.lat.toFixed(5),c.lng.toFixed(5),c.phone||'',c.industry||'',c.level,c.notes||''].map(s=>encodeURIComponent(s)).join(',')
+  ).join(';');
+  const url=location.origin+location.pathname+'#data='+encoded;
+  navigator.clipboard.writeText(url).then(()=>{
+    toast('分享链接已复制到剪贴板');
+  }).catch(()=>{
+    // Fallback: prompt
+    prompt('复制以下链接：',url);
+  });
+}
+
+// ===================== Load Shared Data =====================
+function loadSharedData(){
+  const hash=location.hash;
+  if(!hash.startsWith('#data='))return;
+  try{
+    const raw=decodeURIComponent(hash.slice(6));
+    const imported=raw.split(';').map(s=>{
+      const p=s.split(',');
+      if(p.length<4)return null;
+      return{
+        id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+        name:decodeURIComponent(p[0]),
+        address:decodeURIComponent(p[1]),
+        lat:parseFloat(p[2]),lng:parseFloat(p[3]),
+        phone:decodeURIComponent(p[4]||''),
+        industry:decodeURIComponent(p[5]||''),
+        level:p[6]||'B',
+        notes:decodeURIComponent(p[7]||'')
+      };
+    }).filter(Boolean);
+    if(imported.length>0&&confirm(`检测到分享数据 (${imported.length} 个客户)，是否导入？`)){
+      const ids=new Set(clients.map(c=>c.id));
+      imported.forEach(c=>{if(!ids.has(c.id))clients.push(c)});
+      saveClients();
+      refreshAllMarkers();
+      toast(`已导入 ${imported.length} 个客户`);
+    }
+    history.replaceState(null,'',location.pathname);
+  }catch(e){console.error('Failed to load shared data',e)}
+}
+
+// ===================== Utils =====================
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function toast(msg){
+  const el=document.createElement('div');
+  el.className='toast';el.textContent=msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),2500);
+}
+
+// ===================== Init =====================
+(function init(){
+  refreshAllMarkers();
+  updateClientList();
+  updateRoute();
+  loadSharedData();
+  // Fit bounds to clients if any
+  if(clients.length>0){
+    const bounds=L.latLngBounds(clients.map(c=>{const g=wgs84ToGcj02(c.lng,c.lat);return[g.lat,g.lng]}));
+    map.fitBounds(bounds,{padding:[50,50]});
+  }
+})();
+</script>
+</body>
+</html>
