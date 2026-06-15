@@ -617,22 +617,53 @@ function openAddPanel(){
   togglePanel('panelRight');
 }
 
-// ===================== Search (Nominatim) =====================
+// ===================== Search + History =====================
 let searchTimer=null;
+const SEARCH_HISTORY_KEY='qz_searchHistory';
+const MAX_HISTORY=20;
+
+function getSearchHistory(){
+  try{return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY)||'[]')}catch(e){return[]}
+}
+
+function saveSearchHistory(query){
+  if(!query||query.length<1)return;
+  let history=getSearchHistory();
+  history=history.filter(h=>h!==query);
+  history.unshift(query);
+  if(history.length>MAX_HISTORY)history=history.slice(0,MAX_HISTORY);
+  localStorage.setItem(SEARCH_HISTORY_KEY,JSON.stringify(history));
+}
+
+function showSearchHistory(){
+  const el=document.getElementById('searchResults');
+  const history=getSearchHistory();
+  if(!history.length){el.innerHTML='';return}
+  el.innerHTML='<div style="padding:8px 14px;font-size:11px;color:#8c8c8c">最近搜索</div>'+
+    history.map(h=>`<div class="search-item" onclick="replaySearch('${esc(h).replace(/'/g,"\\'")}')">
+      <div class="name" style="font-size:13px">🕐 ${esc(h)}</div>
+    </div>`).join('');
+}
+
+function replaySearch(q){
+  document.getElementById('searchInput').value=q;
+  doSearch(q);
+}
+
 function toggleSearch(){
   const box=document.getElementById('searchBox');
   box.classList.toggle('open');
   if(box.classList.contains('open')){
     document.getElementById('searchInput').value='';
     document.getElementById('searchInput').focus();
-    document.getElementById('searchResults').innerHTML='';
+    showSearchHistory();
   }
 }
 
 document.getElementById('searchInput').addEventListener('input',function(){
   clearTimeout(searchTimer);
   const q=this.value.trim();
-  if(q.length<1){document.getElementById('searchResults').innerHTML='';return}
+  if(q.length<1){showSearchHistory();return}
   searchTimer=setTimeout(()=>doSearch(q),150);
 });
 
@@ -777,6 +808,10 @@ function doSearch(q){
 }
 
 function selectSearchResult(lat,lng,displayName,isGcj){
+  // Save to search history
+  const currentQuery=document.getElementById('searchInput').value.trim();
+  if(currentQuery)saveSearchHistory(currentQuery);
+
   let wgsLat,wgsLng,gcjLat,gcjLng;
   if(isGcj){
     const wgs=gcj02ToWgs84(parseFloat(lng),parseFloat(lat));
@@ -898,8 +933,48 @@ function updateRoute(){
   }).join('');
 }
 
+// Haversine distance between two GCJ-02 points (in meters)
+function haversineDist(a,b){
+  const R=6371000,toRad=d=>d*Math.PI/180;
+  const dLat=toRad(b.lat-a.lat),dLng=toRad(b.lng-a.lng);
+  const s=Math.sin(dLat/2)**2+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s));
+}
+
+// TSP nearest-neighbor: reorder stops for shortest path, starting from first stop
+function optimizeRouteOrder(ids){
+  if(ids.length<=2)return ids;
+  const pts=ids.map(id=>{
+    const c=clients.find(x=>x.id===id);
+    if(!c)return{lng:0,lat:0};
+    const gcj=wgs84ToGcj02(c.lng,c.lat);
+    return{lng:gcj.lng,lat:gcj.lat};
+  });
+  const visited=new Set([0]);
+  const order=[ids[0]];
+  let current=0;
+  for(let step=1;step<ids.length;step++){
+    let bestIdx=-1,bestDist=Infinity;
+    for(let j=0;j<ids.length;j++){
+      if(visited.has(j))continue;
+      const d=haversineDist(pts[current],pts[j]);
+      if(d<bestDist){bestDist=d;bestIdx=j}
+    }
+    visited.add(bestIdx);
+    order.push(ids[bestIdx]);
+    current=bestIdx;
+  }
+  return order;
+}
+
 async function calcRoute(){
   if(routeStops.length<2)return toast('至少需要2个站点');
+
+  // Optimize stop order using nearest-neighbor TSP
+  const originalOrder=[...routeStops];
+  routeStops=optimizeRouteOrder(routeStops);
+  updateRoute(); // refresh panel to show optimized order
+
   const pts=routeStops.map(id=>{
     const c=clients.find(x=>x.id===id);
     if(!c)return null;
@@ -911,6 +986,10 @@ async function calcRoute(){
   document.getElementById('calcBtn').textContent='计算中...';
   document.getElementById('calcBtn').disabled=true;
 
+  // Check if order changed
+  const orderChanged=originalOrder.some((id,i)=>id!==routeStops[i]);
+  if(orderChanged)toast('已自动优化为最短路线');
+
   try{
     const coords=pts.map(p=>`${p.lng},${p.lat}`).join(';');
     const url=`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
@@ -921,7 +1000,6 @@ async function calcRoute(){
     const route=data.routes[0];
     if(routeLayer)map.removeLayer(routeLayer);
 
-    // OSRM returns WGS-84, convert to GCJ-02 for display on Gaode tiles
     const gcjCoords=route.geometry.coordinates.map(([lng,lat])=>{
       const g=wgs84ToGcj02(lng,lat);
       return[g.lat,g.lng];
@@ -935,7 +1013,7 @@ async function calcRoute(){
     const summaryEl=document.getElementById('routeSummary');
     summaryEl.style.display='flex';
     summaryEl.innerHTML=`
-      <div class="stats">总距离 <strong>${distKm} km</strong> · 预计 <strong>${durMin} 分钟</strong></div>
+      <div class="stats">总距离 <strong>${distKm} km</strong> · 预计 <strong>${durMin} 分钟</strong>${orderChanged?' · <span style="color:#1677ff">已优化</span>':''}</div>
       <button class="btn btn-primary btn-sm" onclick="openNavigation()">开始导航</button>
     `;
   }catch(e){
