@@ -614,45 +614,112 @@ document.getElementById('searchInput').addEventListener('input',function(){
   searchTimer=setTimeout(()=>doSearch(q),500);
 });
 
+// ===================== Multi-source Search =====================
+// Source 1: Gaode (AMap) - best for Chinese addresses, returns GCJ-02 coords
+async function searchGaode(q){
+  const url=`https://ditu.amap.com/service/poiInfo?query_type=TQUERY&pagesize=8&pagenum=1&qii=true&cluster_state=5&need_utd=true&utd_sceneid=1000&div=PC1000&addr_poi_merge=true&is_classify=true&zoom=11&city=350500&geoobj=118.0%7C24.6%7C119.0%7C25.3&keywords=${encodeURIComponent(q)}`;
+  const res=await fetch(url);
+  const json=await res.json();
+  if(!json.data||!json.data.poi_list||!json.data.poi_list.length)return[];
+  return json.data.poi_list.filter(p=>p.x&&p.y).map(p=>({
+    name:p.name,
+    addr:p.address||p.name,
+    lat:parseFloat(p.y),lng:parseFloat(p.x),
+    isGcj:true // Gaode returns GCJ-02 coords
+  }));
+}
+
+// Source 2: Photon (Komoot) - good coverage, no CORS issues, WGS-84 coords
+async function searchPhoton(q){
+  const url=`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lat=24.9&lon=118.58&lang=zh`;
+  const res=await fetch(url);
+  const json=await res.json();
+  if(!json.features||!json.features.length)return[];
+  return json.features.map(f=>{
+    const p=f.properties;
+    const parts=[p.name,p.street,p.district,p.city,p.county,p.state].filter(Boolean);
+    return{
+      name:p.name||parts[0]||'未知',
+      addr:parts.join(', '),
+      lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0],
+      isGcj:false
+    };
+  });
+}
+
+// Source 3: Nominatim (OpenStreetMap) - fallback, WGS-84 coords
+async function searchNominatim(q){
+  const url=`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=8&viewbox=117.5,24.3,119.5,25.5&bounded=0&accept-language=zh`;
+  const res=await fetch(url);
+  const data=await res.json();
+  if(!data.length)return[];
+  return data.map(r=>({
+    name:r.display_name.split(',').slice(0,2).join(','),
+    addr:r.display_name,
+    lat:parseFloat(r.lat),lng:parseFloat(r.lon),
+    isGcj:false
+  }));
+}
+
 async function doSearch(q){
   const el=document.getElementById('searchResults');
   el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">搜索中...</div>';
-  try{
-    // Bias towards Quanzhou area
-    const url=`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=8&viewbox=117.5,24.3,119.5,25.5&bounded=0&accept-language=zh`;
-    const res=await fetch(url);
-    const data=await res.json();
-    if(!data.length){
-      el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">未找到结果，试试其他关键词</div>';
-      return;
+
+  // Try sources in order: Gaode → Photon → Nominatim
+  const sources=[
+    {fn:searchGaode,label:'高德'},
+    {fn:searchPhoton,label:'Photon'},
+    {fn:searchNominatim,label:'OSM'}
+  ];
+
+  for(const src of sources){
+    try{
+      const results=await src.fn(q);
+      if(results.length>0){
+        el.innerHTML=results.map(r=>`
+          <div class="search-item" onclick="selectSearchResult(${r.lat},${r.lon},'${esc(r.addr)}',${r.isGcj})">
+            <div class="name">${esc(r.name)}</div>
+            <div class="addr">${esc(r.addr)}</div>
+          </div>
+        `).join('');
+        return;
+      }
+    }catch(e){
+      console.warn(src.label+' search failed:',e);
+      continue;
     }
-    el.innerHTML=data.map((r,i)=>`
-      <div class="search-item" onclick="selectSearchResult(${r.lat},${r.lon},'${esc(r.display_name)}')">
-        <div class="name">${esc(r.display_name.split(',').slice(0,2).join(','))}</div>
-        <div class="addr">${esc(r.display_name)}</div>
-      </div>
-    `).join('');
-  }catch(e){
-    el.innerHTML='<div style="padding:12px;text-align:center;color:#ff4d4f;font-size:13px">搜索失败，请稍后重试</div>';
   }
+
+  el.innerHTML='<div style="padding:12px;text-align:center;color:#8c8c8c;font-size:13px">未找到结果，试试其他关键词<br><span style="font-size:11px;color:#bbb">也可以在地图上点击选择位置</span></div>';
 }
 
-function selectSearchResult(lat,lng,displayName){
+function selectSearchResult(lat,lng,displayName,isGcj){
   document.getElementById('fAddr').value=displayName;
-  // Convert from WGS-84 to display, but store WGS-84
-  document.getElementById('fLat').value=lat;
-  document.getElementById('fLng').value=lng;
-  document.getElementById('coordHint').textContent=`坐标: ${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}`;
+  if(isGcj){
+    // Gaode coords are GCJ-02, convert to WGS-84 for storage
+    const gcj=wgs84ToGcj02(lng,lat);
+    const wgsLng=lng-(gcj.lng-lng);
+    const wgsLat=lat-(gcj.lat-lat);
+    document.getElementById('fLat').value=wgsLat;
+    document.getElementById('fLng').value=wgsLng;
+    document.getElementById('coordHint').textContent=`坐标: ${wgsLat.toFixed(5)}, ${wgsLng.toFixed(5)}`;
+  }else{
+    document.getElementById('fLat').value=lat;
+    document.getElementById('fLng').value=lng;
+    document.getElementById('coordHint').textContent=`坐标: ${parseFloat(lat).toFixed(5)}, ${parseFloat(lng).toFixed(5)}`;
+  }
   toggleSearch();
 
   // If add panel is open, fly to location and show temp marker
   if(document.getElementById('panelRight').classList.contains('open')){
     const gcj=wgs84ToGcj02(parseFloat(lng),parseFloat(lat));
+    const displayLat=isGcj?lat:gcj.lat;
+    const displayLng=isGcj?lng:gcj.lng;
     if(tempMarker)map.removeLayer(tempMarker);
-    tempMarker=L.marker([gcj.lat,gcj.lng],{
+    tempMarker=L.marker([displayLat,displayLng],{
       icon:L.divIcon({className:'',html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff">📍</div>',iconSize:[28,28],iconAnchor:[14,14]})
     }).addTo(map);
-    map.flyTo(gcj.lat,gcj.lng,15,{duration:0.8});
+    map.flyTo(displayLat,displayLng,15,{duration:0.8});
   }
 }
 
