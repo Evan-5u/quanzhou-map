@@ -1115,12 +1115,12 @@ async function syncFromGitHub(){
     const remoteClients=JSON.parse(jsonStr);
     if(!Array.isArray(remoteClients))return;
 
-    // Get commit time from GitHub
-    const commitTime=data.commit?new Date(data.commit.committer.date).getTime():0;
+    const localLen=clients.length;
+    const remoteLen=remoteClients.length;
     const localSyncTime=parseInt(localStorage.getItem(SYNC_TS_KEY)||'0');
 
-    // If GitHub is newer, overwrite local
-    if(commitTime>localSyncTime&&remoteClients.length>0){
+    if(localLen===0&&remoteLen>0){
+      // Fresh device or empty local - load from cloud
       clients=remoteClients;
       localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
       localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
@@ -1128,22 +1128,27 @@ async function syncFromGitHub(){
       updateClientList();
       updateRoute();
       toast('☁️ 已从云端同步 '+clients.length+' 位客户');
-    }else if(clients.length>0&&remoteClients.length===0){
-      // Local has data but GitHub is empty - push local to GitHub
+    }else if(localLen>0&&remoteLen===0){
+      // Local has data but GitHub is empty - push to cloud
       syncToGitHub();
-    }else if(remoteClients.length>0&&clients.length>0&&remoteClients.length!==clients.length){
-      // Both have data with different counts - merge by id
+    }else if(localLen>0&&remoteLen>0){
+      // Both have data - merge by id (union)
       const idMap=new Map();
       remoteClients.forEach(c=>idMap.set(c.id,c));
-      clients.forEach(c=>idMap.set(c.id,c)); // local wins for conflicts
-      clients=Array.from(idMap.values());
-      localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
-      localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
-      refreshAllMarkers();
-      updateClientList();
-      updateRoute();
-      syncToGitHub();
-      toast('☁️ 数据已合并同步');
+      clients.forEach(c=>idMap.set(c.id,c)); // local wins for same id
+      const merged=Array.from(idMap.values());
+      if(merged.length>localLen||merged.length>remoteLen){
+        // New clients found - update both sides
+        clients=merged;
+        localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
+        localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
+        refreshAllMarkers();
+        updateClientList();
+        updateRoute();
+        syncToGitHub();
+        toast('☁️ 数据已合并，共 '+clients.length+' 位客户');
+      }
+      // If same count and same ids, no action needed
     }
   }catch(e){
     console.warn('syncFromGitHub error:',e);
