@@ -678,12 +678,21 @@ function levelColor(level){
   return{A:'#ff4d4f',B:'#faad14',C:'#1677ff',D:'#52c41a'}[level]||'#1677ff'
 }
 
-// Generate marker label: 2-3 core chars with adaptive font size
+// Generate marker label: extract core brand name from company name
 function markerLabel(name){
-  const n=name.trim();
+  let n=name.trim();
+  // Strip geographic prefixes (province/city/county/district + optional 市/县/区)
+  n=n.replace(/^(福建省|福建)//,'');
+  n=n.replace(/^(泉州市?|晋江[市]?|南安[市]?|石狮[市]?|惠安[县]?|安溪[县]?|永春[县]?|德化[县]?|丰泽区?|鲤城区?|洛江区?|泉港区?|台商投资区?|泉州经济开发区?|陈埭镇?|水头镇?|霞美镇?|安海镇?|官桥镇?|磁灶镇?|池店镇?|龙湖镇?|深沪镇?|英林镇?|东石镇?|内坑镇?|紫帽镇?|西滨镇?|金井镇?|灵秀镇?|宝盖镇?|永宁镇?|蚶江镇?|祥芝镇?|鸿山镇?|仑苍镇?|英都镇?|丰州镇?|洪濑镇?|梅山镇?|诗山镇?|码头镇?|石井镇?|康美镇?|黄塘镇?|崇武镇?|净峰镇?|涂寨镇?|城厢镇?|凤城镇?|湖头镇?|尚卿乡?|龙门镇?|西坪镇?|桃城镇?|达埔镇?|蓬壶镇?|浔中镇?|三班镇?|万安街道?|山腰街道?|溪美街道?|梅岭街道?|东海街道?|)//,'');
+  // Strip company type suffixes
+  n=n.replace(/(（.*?）|\(.*?\))/g,''); // remove parenthetical content
+  n=n.replace(/(网络科技|信息科技|电子科技|品牌管理|贸易|科技|集团|股份|有限|公司|企业|工厂|商行|商贸|实业|制造)//g,'');
+  n=n.trim();
+  // If nothing left after stripping, use original
+  if(!n)n=name.trim();
+  // Take 2-3 chars with adaptive font size
   if(n.length<=2)return{text:n,size:13};
   if(n.length<=3)return{text:n,size:11};
-  // For longer names, take first 3 chars as abbreviation
   return{text:n.substring(0,3),size:10};
 }
 
