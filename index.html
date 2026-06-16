@@ -424,14 +424,14 @@ function getEffectiveVisitDays(c){
   return Math.max(0,c.visitDays-elapsed);
 }
 
-// Daily decrement: check if a new day has passed since last decrement
+// Daily check: always re-evaluate urgent clients on page load (banner reappears on refresh)
 function checkDailyDecrement(){
   const lastDec=localStorage.getItem(DECREMENT_KEY)||'';
   const today=new Date().toDateString();
-  if(lastDec===today)return; // already decremented today
-  localStorage.setItem(DECREMENT_KEY,today);
-  // No need to manually decrement - getEffectiveVisitDays() calculates in real-time
-  // Just check for urgent clients
+  if(lastDec!==today){
+    localStorage.setItem(DECREMENT_KEY,today);
+  }
+  // Always check urgent clients on every page load - banner will reappear even after clicking X
   checkUrgentClients();
 }
 
