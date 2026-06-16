@@ -749,7 +749,17 @@ function saveClient(){
   const eid=document.getElementById('fEditId').value;
   const vdRaw=document.getElementById('fVisitDays').value.trim();
   const visitDays=vdRaw===''?null:Math.max(0,parseInt(vdRaw)||0);
-  const visitDate=visitDays!==null?Date.now():null;
+  // Preserve visitDate when editing and days unchanged; reset only when days change
+  let visitDate=null;
+  if(visitDays!==null){
+    if(eid){
+      const existing=clients.find(c=>c.id===eid);
+      const eff=existing?getEffectiveVisitDays(existing):null;
+      visitDate=(eff!==null&&eff===visitDays&&existing.visitDate)?existing.visitDate:Date.now();
+    }else{
+      visitDate=Date.now();
+    }
+  }
   const data={
     id:eid||Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     name,address:addr,
