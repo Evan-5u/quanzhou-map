@@ -452,7 +452,7 @@ function showUrgentBanner(urgentClients){
   if(!banner){
     banner=document.createElement('div');
     banner.id='urgentBanner';
-    banner.style.cssText='position:fixed;top:56px;left:0;right:0;z-index:999;background:#fff1f0;border-bottom:2px solid #ff4d4f;padding:10px 14px;font-size:13px;color:#cf1322;max-height:40vh;overflow-y:auto;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+    banner.style.cssText='position:fixed;bottom:200px;left:12px;right:12px;z-index:997;background:#fff1f0;border:2px solid #ff4d4f;border-radius:12px;padding:10px 14px;font-size:13px;color:#cf1322;max-height:35vh;overflow-y:auto;box-shadow:0 4px 16px rgba(255,77,79,.25)';
     document.body.appendChild(banner);
   }
   const items=urgentClients.sort((a,b)=>getEffectiveVisitDays(a)-getEffectiveVisitDays(b));
