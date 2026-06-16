@@ -458,7 +458,10 @@ function showUrgentBanner(urgentClients){
   const items=urgentClients.sort((a,b)=>getEffectiveVisitDays(a)-getEffectiveVisitDays(b));
   banner.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
     <strong>⚠️ ${items.length}位客户急需拜访（≤3天）</strong>
-    <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none;border:none;font-size:16px;cursor:pointer;color:#cf1322">✕</button>
+    <span style="display:flex;gap:6px">
+      <button onclick="copyUrgentList()" style="background:#1677ff;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">📋 复制提醒</button>
+      <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;font-size:16px;cursor:pointer;color:#cf1322">✕</button>
+    </span>
   </div>`+items.map(c=>{
     const eff=getEffectiveVisitDays(c);
     const color=eff===0?'#cf1322':eff<=1?'#d4380d':'#d48806';
@@ -471,6 +474,18 @@ function showUrgentBanner(urgentClients){
     </div>`;
   }).join('');
   banner.style.display='block';
+}
+
+function copyUrgentList(){
+  const urgent=clients.filter(c=>{const e=getEffectiveVisitDays(c);return e!==null&&e<=3})
+    .sort((a,b)=>getEffectiveVisitDays(a)-getEffectiveVisitDays(b));
+  const text='⚠️ 紧急拜访提醒\n'+urgent.map(c=>{
+    const e=getEffectiveVisitDays(c);
+    return `${e===0?'【今天!】':'【'+e+'天】'} ${c.name}\n📍 ${c.address}${c.phone?'\n📞 '+c.phone:''}`;
+  }).join('\n\n');
+  navigator.clipboard.writeText(text).then(()=>toast('已复制提醒文案，可粘贴发送给小Q')).catch(()=>{
+    prompt('复制以下内容：',text);
+  });
 }
 
 // ===================== Visit Plan Module =====================
