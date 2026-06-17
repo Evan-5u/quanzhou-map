@@ -55,6 +55,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
   transform:translateX(100%);box-shadow:-2px 0 12px rgba(0,0,0,.1)
 }
 #panelRight.open{transform:translateX(0)}
+/* Quick Add panel - fast entry */
+#panelQuickAdd{
+  top:var(--header-h);right:0;bottom:0;width:360px;max-width:90vw;
+  transform:translateX(100%);box-shadow:-2px 0 12px rgba(0,0,0,.1)
+}
+#panelQuickAdd.open{transform:translateX(0)}
 /* Bottom panel - route */
 #panelBottom{
   left:0;right:0;bottom:0;max-height:45vh;
@@ -282,7 +288,46 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
   </div>
 </div>
 
-<!-- Right Panel - Add/Edit Client -->
+<!-- Quick Add Panel - Fast Entry Mode -->
+<div id="panelQuickAdd" class="panel">
+  <div class="panel-header">
+    <h2>⚡ 快速录入</h2>
+    <button class="panel-close" onclick="togglePanel('panelQuickAdd')">✕</button>
+  </div>
+  <div class="panel-body">
+    <div id="qaSingleMode">
+      <div class="form-group">
+        <label>客户名称 *</label>
+        <input type="text" id="qaName" placeholder="如：华鸿天线">
+      </div>
+      <div class="form-group">
+        <label>地址（自动定位）*</label>
+        <input type="text" id="qaAddr" placeholder="如：泉州市南安市霞美镇xx">
+      </div>
+      <div class="form-group">
+        <label>倒计时（天）</label>
+        <input type="number" id="qaDays" min="0" max="999" placeholder="选填">
+      </div>
+      <button class="btn btn-primary btn-block" onclick="quickAddClient()" id="qaAddBtn">⚡ 快速添加并标记地图</button>
+      <div style="height:16px"></div>
+      <button class="btn btn-outline btn-block" onclick="toggleQAMode()">📋 批量录入模式</button>
+    </div>
+    <div id="qaBatchMode" style="display:none">
+      <div class="form-group">
+        <label>批量录入（每行一个，名称和地址用空格或逗号分隔）</label>
+        <textarea id="qaBatchText" placeholder="示例：&#10;华鸿天线 泉州市南安市霞美镇xxx&#10;瑞济康网络,泉州市丰泽区宝洲路xxx&#10;大本营 泉州市丰泽区东湖街xxx" style="min-height:140px;font-size:13px"></textarea>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="batchAddClients()" id="qaBatchBtn">⚡ 批量添加并标记</button>
+      <div style="height:16px"></div>
+      <button class="btn btn-outline btn-block" onclick="toggleQAMode()">← 返回单条录入</button>
+    </div>
+    <div style="height:16px"></div>
+    <button class="btn btn-outline btn-block" onclick="switchToFullForm()">📝 详细模式（填写电话/备注等）</button>
+    <p id="qaStatus" style="font-size:11px;color:var(--text3);text-align:center;margin-top:8px"></p>
+  </div>
+</div>
+
+<!-- Right Panel - Add/Edit Client (full form, used for editing) -->
 <div id="panelRight" class="panel">
   <div class="panel-header">
     <h2 id="formTitle">添加客户</h2>
@@ -926,14 +971,179 @@ function togglePanel(id){
 }
 
 function closeAllPanels(){
-  ['panelLeft','panelRight','panelBottom','panelVisitPlan'].forEach(id=>document.getElementById(id).classList.remove('open'));
+  ['panelLeft','panelRight','panelBottom','panelVisitPlan','panelQuickAdd'].forEach(id=>document.getElementById(id).classList.remove('open'));
   document.getElementById('overlay').classList.remove('show');
   document.getElementById('searchBox').classList.remove('open');
 }
 
 function openAddPanel(){
+  // Open quick add panel (fast entry mode)
+  document.getElementById('qaName').value='';
+  document.getElementById('qaAddr').value='';
+  document.getElementById('qaDays').value='';
+  document.getElementById('qaStatus').textContent='';
+  document.getElementById('qaSingleMode').style.display='';
+  document.getElementById('qaBatchMode').style.display='none';
+  togglePanel('panelQuickAdd');
+}
+
+function switchToFullForm(){
+  togglePanel('panelQuickAdd');
   resetForm();
+  // Pre-fill from quick add if available
+  const qaName=document.getElementById('qaName').value.trim();
+  const qaAddr=document.getElementById('qaAddr').value.trim();
+  if(qaName)document.getElementById('fName').value=qaName;
+  if(qaAddr)document.getElementById('fAddr').value=qaAddr;
   togglePanel('panelRight');
+}
+
+function toggleQAMode(){
+  const single=document.getElementById('qaSingleMode');
+  const batch=document.getElementById('qaBatchMode');
+  if(single.style.display==='none'){
+    single.style.display='';batch.style.display='none';
+  }else{
+    single.style.display='none';batch.style.display='';
+  }
+}
+
+// Auto-geocode address using AMap PlaceSearch, returns Promise<{lat,lng,addr}>
+function geocodeAddress(addr){
+  return new Promise((resolve,reject)=>{
+    // Try local POI database first
+    const keywords=addr.toLowerCase();
+    const localMatch=QZ_POI.find(p=>p[0]===addr||p[0].includes(addr)||(p[1]+' '+p[0]).includes(addr));
+    if(localMatch){
+      resolve({lat:localMatch[2],lng:localMatch[3],addr:localMatch[1]+' '+localMatch[0],isGcj:false});
+      return;
+    }
+    // Try AMap PlaceSearch
+    if(amapPlaceSearch){
+      amapPlaceSearch.search(addr,function(status,result){
+        if(status==='complete'&&result.poiList&&result.poiList.pois&&result.poiList.pois.length>0){
+          const p=result.poiList.pois[0];
+          resolve({lat:parseFloat(p.location.lat),lng:parseFloat(p.location.lng),addr:(p.pname||'')+(p.cityname||'')+(p.adname||'')+(p.address||''),isGcj:true});
+        }else{
+          reject('地址未找到: '+addr);
+        }
+      });
+    }else{
+      reject('地图服务不可用');
+    }
+  });
+}
+
+async function quickAddClient(){
+  const name=document.getElementById('qaName').value.trim();
+  const addr=document.getElementById('qaAddr').value.trim();
+  const vdRaw=document.getElementById('qaDays').value.trim();
+  if(!name)return toast('请输入客户名称');
+  if(!addr)return toast('请输入地址');
+
+  const btn=document.getElementById('qaAddBtn');
+  btn.textContent='定位中...';btn.disabled=true;
+  document.getElementById('qaStatus').textContent='正在解析地址...';
+
+  try{
+    const geo=await geocodeAddress(addr);
+    let wgsLat,wgsLng;
+    if(geo.isGcj){
+      const wgs=gcj02ToWgs84(geo.lng,geo.lat);
+      wgsLat=wgs.lat;wgsLng=wgs.lng;
+    }else{
+      wgsLat=geo.lat;wgsLng=geo.lng;
+    }
+
+    const visitDays=vdRaw===''?null:Math.max(0,parseInt(vdRaw)||0);
+    const visitDate=visitDays!==null?Date.now():null;
+
+    const data={
+      id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+      name,address:geo.addr||addr,
+      phone:'',industry:'',level:'B',notes:'',
+      visitDays,visitDate,
+      lat:wgsLat,lng:wgsLng
+    };
+
+    clients.push(data);
+    saveClients();
+    addMarker(data);
+    map.flyTo(wgs84ToGcj02(wgsLng,wgsLat).lat,wgs84ToGcj02(wgsLng,wgsLat).lng,14,{duration:0.6});
+    toast('✓ '+name+' 已添加');
+    document.getElementById('qaStatus').textContent='✓ '+name+' 已添加并标记';
+
+    // Clear form for next entry (stay open for rapid entry)
+    document.getElementById('qaName').value='';
+    document.getElementById('qaAddr').value='';
+    document.getElementById('qaDays').value='';
+    document.getElementById('qaName').focus();
+  }catch(e){
+    toast('❌ '+e);
+    document.getElementById('qaStatus').textContent='❌ '+e;
+    document.getElementById('qaAddr').style.borderColor='#ff4d4f';
+    setTimeout(()=>document.getElementById('qaAddr').style.borderColor='',2000);
+  }finally{
+    btn.textContent='⚡ 快速添加并标记地图';btn.disabled=false;
+  }
+}
+
+async function batchAddClients(){
+  const text=document.getElementById('qaBatchText').value.trim();
+  if(!text)return toast('请输入批量数据');
+  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(lines.length===0)return toast('无有效数据');
+
+  const btn=document.getElementById('qaBatchBtn');
+  btn.textContent='处理中...';btn.disabled=true;
+
+  let added=0,failed=0;
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    // Split by comma or first space/tab
+    let name,addr;
+    if(line.includes(',')){
+      const parts=line.split(',');name=parts[0].trim();addr=parts.slice(1).join(',').trim();
+    }else{
+      const idx=line.search(/\s/);
+      if(idx>0){name=line.substring(0,idx).trim();addr=line.substring(idx+1).trim();}
+      else{failed++;continue;}
+    }
+    if(!name||!addr){failed++;continue;}
+
+    try{
+      const geo=await geocodeAddress(addr);
+      let wgsLat,wgsLng;
+      if(geo.isGcj){const wgs=gcj02ToWgs84(geo.lng,geo.lat);wgsLat=wgs.lat;wgsLng=wgs.lng;}
+      else{wgsLat=geo.lat;wgsLng=geo.lng;}
+      const data={
+        id:Date.now().toString(36)+Math.random().toString(36).slice(2,6)+(i),
+        name,address:geo.addr||addr,
+        phone:'',industry:'',level:'B',notes:'',
+        visitDays:null,visitDate:null,
+        lat:wgsLat,lng:wgsLng
+      };
+      clients.push(data);
+      addMarker(data);
+      added++;
+      document.getElementById('qaStatus').textContent=`处理中 ${i+1}/${lines.length}...`;
+      // Small delay to avoid API rate limit
+      await new Promise(r=>setTimeout(r,300));
+    }catch(e){
+      failed++;
+    }
+  }
+
+  saveClients();
+  if(added>0){
+    refreshAllMarkers();
+    const bounds=L.latLngBounds(clients.map(c=>{const g=wgs84ToGcj02(c.lng,c.lat);return[g.lat,g.lng]}));
+    map.fitBounds(bounds,{padding:[50,50]});
+  }
+  toast(`✓ 已添加 ${added} 个${failed>0?'，'+failed+' 个失败':''}`);
+  document.getElementById('qaStatus').textContent=`✓ 已添加 ${added} 个${failed>0?'，'+failed+' 个失败':''}`;
+  if(failed===0)document.getElementById('qaBatchText').value='';
+  btn.textContent='⚡ 批量添加并标记';btn.disabled=false;
 }
 
 // ===================== Search + History =====================
@@ -984,6 +1194,13 @@ document.getElementById('searchInput').addEventListener('input',function(){
   const q=this.value.trim();
   if(q.length<1){showSearchHistory();return}
   searchTimer=setTimeout(()=>doSearch(q),150);
+});
+
+// Enter key triggers quick add
+['qaName','qaAddr','qaDays'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown',function(e){
+    if(e.key==='Enter'){e.preventDefault();quickAddClient();}
+  });
 });
 
 // ===================== AMap (Gaode) POI Search + Local Fallback =====================
