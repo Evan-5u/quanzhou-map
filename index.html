@@ -196,6 +196,20 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
 @keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes toastOut{to{opacity:0;transform:translateX(-50%) translateY(-10px)}}
 
+/* ===== Client List Search/Filter ===== */
+#clientSearchBar{
+  padding:8px 16px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;gap:6px;align-items:center
+}
+#clientSearchInput{
+  flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;
+  font-size:13px;outline:none;transition:border .2s
+}
+#clientSearchInput:focus{border-color:var(--primary)}
+#clientSortSelect{
+  padding:6px 8px;border:1px solid var(--border);border-radius:8px;
+  font-size:12px;outline:none;background:var(--card);color:var(--text);cursor:pointer;max-width:110px
+}
+
 /* ===== Empty State ===== */
 .empty{text-align:center;padding:40px 20px;color:var(--text3)}
 .empty .icon{font-size:40px;margin-bottom:12px}
@@ -278,6 +292,15 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
   <div class="panel-header">
     <h2>客户列表 (<span id="clientCount">0</span>)</h2>
     <button class="panel-close" onclick="togglePanel('panelLeft')">✕</button>
+  </div>
+  <div id="clientSearchBar">
+    <input type="text" id="clientSearchInput" placeholder="搜索客户名称/地址..." autocomplete="off">
+    <select id="clientSortSelect">
+      <option value="level">按等级</option>
+      <option value="days">按倒计时</option>
+      <option value="name">按名称</option>
+      <option value="recent">按添加</option>
+    </select>
   </div>
   <div class="panel-body" id="clientList"></div>
   <div class="ie-section">
@@ -386,7 +409,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC"
   <div class="panel-body" id="routeBody">
     <div class="empty" id="routeEmpty">
       <div class="icon">🗺️</div>
-      <p>点击客户标记上的「加入路线」<br>添加拜访站点</p>
+      <p>默认从「我的位置」出发<br>点击客户标记上的「加入路线」<br>添加拜访目的地</p>
     </div>
     <div id="routeStops"></div>
     <div id="routeSummary" class="route-summary" style="display:none"></div>
@@ -445,7 +468,7 @@ function wgs84ToGcj02(lng,lat){
 // ===================== State =====================
 let clients=JSON.parse(localStorage.getItem('qz_clients')||'[]');
 let markers={};
-let routeStops=[];
+let routeStops=JSON.parse(localStorage.getItem('qz_routeStops')||'[]');
 let routeLayer=null;
 let tempMarker=null;
 let searchMarkers=[]; // persistent search markers array
@@ -453,10 +476,14 @@ let locateMarker=null;
 let editId=null;
 const STORAGE_KEY='qz_clients';
 const SYNC_TS_KEY='qz_lastSync';
+const ROUTE_STOPS_KEY='qz_routeStops';
+const VISIT_PLAN_KEY='qz_visitPlan';
+const ROUTE_ORIGIN_KEY='qz_routeOrigin';
 const GH_API='https://api.github.com/repos/Evan-5u/quanzhou-map/contents/clients.json';
 const GH_TOKEN=['gh','p_','6N4G','Jduz','uxdV','cFTC','XfTi','ooQ3','A1ck','im1f','6ZpM'].join('');
 let _ghSha=null; // cached SHA for updating clients.json
 let _syncing=false; // prevent concurrent syncs
+let _routeOrigin=null; // {lat, lng, name} - defaults to my location
 
 // ===================== Visit Countdown Logic =====================
 const DAY_MS=86400000; // 24h in ms
@@ -514,7 +541,7 @@ function showUrgentBanner(urgentClients){
       <span><b style="color:${color}">${eff===0?'今天!':eff+'天'}</b> ${esc(c.name)} - ${esc(c.address)}</span>
       <span style="display:flex;gap:4px">
         ${c.phone?`<a href="tel:${esc(c.phone)}" style="color:#1677ff;text-decoration:none;font-size:12px">📞</a>`:''}
-        <button onclick="flyTo('${c.id}');document.getElementById('urgentBanner').style.display='none'" style="background:#1677ff;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">定位</button>
+        <button onclick="flyToClient('${c.id}')" style="background:#1677ff;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">📍 定位</button>
       </span>
     </div>`;
   }).join('');
@@ -534,7 +561,10 @@ function copyUrgentList(){
 }
 
 // ===================== Visit Plan Module =====================
-let visitPlan=[]; // array of client IDs planned for visit
+let visitPlan=JSON.parse(localStorage.getItem(VISIT_PLAN_KEY)||'[]'); // array of client IDs planned for visit
+
+function saveRouteStops(){localStorage.setItem(ROUTE_STOPS_KEY,JSON.stringify(routeStops))}
+function saveVisitPlan(){localStorage.setItem(VISIT_PLAN_KEY,JSON.stringify(visitPlan))}
 
 function getBaseCamp(){
   return clients.find(c=>c.name==='大本营');
@@ -554,17 +584,20 @@ function toggleVisitPlanPanel(){
 function addToVisitPlan(id){
   if(visitPlan.includes(id)){toast('已在拜访计划中');return}
   visitPlan.push(id);
+  saveVisitPlan();
   updateVisitPlanUI();
   toast('已加入拜访计划');
 }
 
 function removeFromVisitPlan(id){
   visitPlan=visitPlan.filter(x=>x!==id);
+  saveVisitPlan();
   updateVisitPlanUI();
 }
 
 function clearVisitPlan(){
   visitPlan=[];
+  saveVisitPlan();
   updateVisitPlanUI();
 }
 
@@ -643,6 +676,7 @@ async function calcVisitPlanRoute(){
       currentPt=visitPts[bestIdx];
     }
     visitPlan=optimized;
+    saveVisitPlan();
     updateVisitPlanUI();
   }
 
@@ -891,7 +925,10 @@ function deleteClient(id){
   if(markers[id]){map.removeLayer(markers[id]);delete markers[id]}
   clients=clients.filter(c=>c.id!==id);
   routeStops=routeStops.filter(s=>s!==id);
+  visitPlan=visitPlan.filter(s=>s!==id);
   saveClients();
+  saveRouteStops();
+  saveVisitPlan();
   updateRoute();
   toast('已删除');
 }
@@ -912,6 +949,9 @@ function resetForm(){
 }
 
 // ===================== UI =====================
+let _clientSearchQuery='';
+let _clientSortMode='level';
+
 function updateClientList(){
   const el=document.getElementById('clientList');
   document.getElementById('clientCount').textContent=clients.length;
@@ -919,9 +959,52 @@ function updateClientList(){
     el.innerHTML=`<div class="empty"><div class="icon">📋</div><p>暂无客户<br>点击右下角 + 添加第一个客户</p></div>`;
     return;
   }
-  // Sort: A > B > C > D, then by name
+
+  // Filter by search query
+  let filtered=clients;
+  const q=_clientSearchQuery.toLowerCase();
+  if(q){
+    filtered=clients.filter(c=>
+      c.name.toLowerCase().includes(q)||
+      c.address.toLowerCase().includes(q)||
+      (c.phone||'').includes(q)||
+      (c.industry||'').toLowerCase().includes(q)||
+      (c.notes||'').toLowerCase().includes(q)
+    );
+  }
+
+  // Sort
   const order={A:0,B:1,C:2,D:3};
-  const sorted=[...clients].sort((a,b)=>(order[a.level]||9)-(order[b.level]||9)||a.name.localeCompare(b.name,'zh'));
+  let sorted=[...filtered];
+  switch(_clientSortMode){
+    case 'level':
+      sorted.sort((a,b)=>(order[a.level]||9)-(order[b.level]||9)||a.name.localeCompare(b.name,'zh'));
+      break;
+    case 'days':
+      sorted.sort((a,b)=>{
+        const ea=getEffectiveVisitDays(a),eb=getEffectiveVisitDays(b);
+        if(ea===null&&eb===null)return 0;
+        if(ea===null)return 1;
+        if(eb===null)return -1;
+        return ea-eb;
+      });
+      break;
+    case 'name':
+      sorted.sort((a,b)=>a.name.localeCompare(b.name,'zh'));
+      break;
+    case 'recent':
+      sorted.sort((a,b)=>{
+        const ta=clients.indexOf(a),tb=clients.indexOf(b);
+        return tb-ta; // most recently added first
+      });
+      break;
+  }
+
+  if(sorted.length===0){
+    el.innerHTML=`<div class="empty"><div class="icon">🔍</div><p>未找到匹配的客户</p></div>`;
+    return;
+  }
+
   el.innerHTML=sorted.map(c=>{
     const eff=getEffectiveVisitDays(c);
     let vdBadge='';
@@ -951,13 +1034,72 @@ function updateClientList(){
   }).join('');
 }
 
+// Event listeners for client search and sort
+document.getElementById('clientSearchInput').addEventListener('input',function(){
+  _clientSearchQuery=this.value.trim();
+  updateClientList();
+});
+document.getElementById('clientSortSelect').addEventListener('change',function(){
+  _clientSortMode=this.value;
+  updateClientList();
+});
+
 function flyTo(id){
   const c=clients.find(x=>x.id===id);
   if(!c)return;
   closeAllPanels();
   const gcj=wgs84ToGcj02(c.lng,c.lat);
-  map.flyTo(gcj.lat,gcj.lng,16,{duration:0.8});
-  setTimeout(()=>{if(markers[id])markers[id].openPopup()},800);
+  map.flyTo(gcj.lat,gcj.lng,17,{duration:0.8});
+  // Highlight marker with pulse animation
+  if(markers[id]){
+    const m=markers[id];
+    // Re-create icon with highlight class
+    const label=markerLabel(c.name);
+    m.setIcon(L.divIcon({
+      className:'',
+      html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:${label.size+2}px;font-weight:700;box-shadow:0 0 0 8px rgba(255,77,79,.3),0 2px 8px rgba(0,0,0,.3);border:3px solid #ff4d4f;animation:pulse 1.5s infinite;line-height:1">${label.text}</div>`,
+      iconSize:[40,40],iconAnchor:[20,20],popupAnchor:[0,-22]
+    }));
+    // Reset marker icon after 5 seconds
+    setTimeout(()=>{
+      if(markers[id]){
+        markers[id].setIcon(L.divIcon({
+          className:'',
+          html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:${label.size}px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;line-height:1">${label.text}</div>`,
+          iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
+        }));
+      }
+    },5000);
+    setTimeout(()=>m.openPopup(),900);
+  }
+}
+
+// Fly to client marker without closing panels (used by urgent banner locate button)
+function flyToClient(id){
+  const c=clients.find(x=>x.id===id);
+  if(!c)return;
+  const gcj=wgs84ToGcj02(c.lng,c.lat);
+  map.flyTo(gcj.lat,gcj.lng,17,{duration:0.8});
+  if(markers[id]){
+    const m=markers[id];
+    const label=markerLabel(c.name);
+    // Highlight with pulse
+    m.setIcon(L.divIcon({
+      className:'',
+      html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:${label.size+2}px;font-weight:700;box-shadow:0 0 0 8px rgba(255,77,79,.3),0 2px 8px rgba(0,0,0,.3);border:3px solid #ff4d4f;animation:pulse 1.5s infinite;line-height:1">${label.text}</div>`,
+      iconSize:[40,40],iconAnchor:[20,20],popupAnchor:[0,-22]
+    }));
+    setTimeout(()=>{
+      if(markers[id]){
+        markers[id].setIcon(L.divIcon({
+          className:'',
+          html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:${label.size}px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;line-height:1">${label.text}</div>`,
+          iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
+        }));
+      }
+    },5000);
+    setTimeout(()=>m.openPopup(),900);
+  }
 }
 
 function togglePanel(id){
@@ -1422,6 +1564,7 @@ map.on('click',function(e){
 function addToRoute(id){
   if(routeStops.includes(id)){toast('该客户已在路线中');return}
   routeStops.push(id);
+  saveRouteStops();
   updateRoute();
   toast('已加入路线');
   map.closePopup();
@@ -1429,12 +1572,16 @@ function addToRoute(id){
 
 function removeFromRoute(id){
   routeStops=routeStops.filter(s=>s!==id);
+  saveRouteStops();
   updateRoute();
 }
 
 function clearRoute(){
   routeStops=[];
+  saveRouteStops();
   if(routeLayer){map.removeLayer(routeLayer);routeLayer=null}
+  _routeOrigin=null;
+  localStorage.removeItem(ROUTE_ORIGIN_KEY);
   updateRoute();
 }
 
@@ -1445,6 +1592,7 @@ function updateRoute(){
   const calcBtn=document.getElementById('calcBtn');
   const routeBtn=document.getElementById('routeBtn');
 
+  // Show empty state when no destination stops
   if(routeStops.length===0){
     empty.style.display='';
     stopsEl.innerHTML='';
@@ -1455,10 +1603,26 @@ function updateRoute(){
   }
 
   empty.style.display='none';
-  calcBtn.disabled=routeStops.length<2;
+  // Enable calc with 1+ stops (origin = my location)
+  calcBtn.disabled=routeStops.length<1;
   routeBtn.textContent=`🧭(${routeStops.length})`;
 
-  stopsEl.innerHTML=routeStops.map((id,i)=>{
+  let html='';
+  // Show origin: either my location or a custom origin
+  if(_routeOrigin){
+    html+=`<div class="route-stop" style="border-left:3px solid #52c41a">
+      <div class="idx" style="background:#52c41a">⊙</div>
+      <div class="info"><div class="n">${esc(_routeOrigin.name)}</div><div class="a">${esc(_routeOrigin.address||'自动定位')}</div></div>
+      <div class="remove" onclick="clearRouteOrigin()">✕</div>
+    </div>`;
+  }else{
+    html+=`<div class="route-stop" style="border-left:3px solid #1677ff">
+      <div class="idx" style="background:#1677ff">⊙</div>
+      <div class="info"><div class="n">我的位置</div><div class="a">自动获取当前位置作为出发点</div></div>
+    </div>`;
+  }
+
+  html+=routeStops.map((id,i)=>{
     const c=clients.find(x=>x.id===id);
     if(!c)return'';
     return`<div class="route-stop">
@@ -1467,6 +1631,14 @@ function updateRoute(){
       <div class="remove" onclick="removeFromRoute('${id}')">✕</div>
     </div>`;
   }).join('');
+  stopsEl.innerHTML=html;
+}
+
+function clearRouteOrigin(){
+  _routeOrigin=null;
+  localStorage.removeItem(ROUTE_ORIGIN_KEY);
+  updateRoute();
+  toast('已恢复为"我的位置"作为出发点');
 }
 
 // Haversine distance between two GCJ-02 points (in meters)
@@ -1504,30 +1676,85 @@ function optimizeRouteOrder(ids){
 }
 
 async function calcRoute(){
-  if(routeStops.length<2)return toast('至少需要2个站点');
+  if(routeStops.length<1)return toast('至少需要添加1个目的地');
 
-  // Optimize stop order using nearest-neighbor TSP
-  const originalOrder=[...routeStops];
-  routeStops=optimizeRouteOrder(routeStops);
-  updateRoute(); // refresh panel to show optimized order
+  // Get origin: either custom origin or geolocation
+  let originPt=null; // {lng, lat} in WGS-84
+  let originName='我的位置';
 
-  const pts=routeStops.map(id=>{
+  if(_routeOrigin){
+    originPt={lng:_routeOrigin.lng,lat:_routeOrigin.lat};
+    originName=_routeOrigin.name;
+  }else{
+    // Get current location via geolocation
+    try{
+      toast('正在获取当前位置...');
+      const pos=await new Promise((resolve,reject)=>{
+        if(!navigator.geolocation)return reject(new Error('浏览器不支持定位'));
+        navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:10000});
+      });
+      originPt={lng:pos.coords.longitude,lat:pos.coords.latitude};
+      // Show locate marker
+      const gcj=wgs84ToGcj02(originPt.lng,originPt.lat);
+      if(locateMarker)map.removeLayer(locateMarker);
+      locateMarker=L.marker([gcj.lat,gcj.lng],{
+        icon:L.divIcon({className:'',html:'<div style="background:#fff;border:3px solid #1677ff;border-radius:50%;width:20px;height:20px;box-shadow:0 0 0 6px rgba(22,119,255,.2)"></div>',iconSize:[20,20],iconAnchor:[10,10]})
+      }).addTo(map);
+    }catch(e){
+      return toast('定位失败: '+e.message+'\n请允许浏览器定位权限');
+    }
+  }
+
+  // Build route: origin → optimized stops
+  const stopPts=routeStops.map(id=>{
+    const c=clients.find(x=>x.id===id);
+    if(!c)return null;
+    const gcj=wgs84ToGcj02(c.lng,c.lat);
+    return{id,lng:gcj.lng,lat:gcj.lat};
+  }).filter(Boolean);
+  if(stopPts.length<1)return;
+
+  // Optimize stop order using nearest-neighbor from origin
+  if(stopPts.length>1){
+    const originGcj=wgs84ToGcj02(originPt.lng,originPt.lat);
+    const visited=new Set();
+    const optimized=[];
+    let currentPt=originGcj;
+    for(let step=0;step<stopPts.length;step++){
+      let bestIdx=-1,bestDist=Infinity;
+      for(let j=0;j<stopPts.length;j++){
+        if(visited.has(j))continue;
+        const d=haversineDist(currentPt,stopPts[j]);
+        if(d<bestDist){bestDist=d;bestIdx=j}
+      }
+      visited.add(bestIdx);
+      optimized.push(stopPts[bestIdx]);
+      currentPt=stopPts[bestIdx];
+    }
+    const newOrder=optimized.map(p=>p.id);
+    const orderChanged=newOrder.some((id,i)=>id!==routeStops[i]);
+    if(orderChanged){
+      routeStops=newOrder;
+      saveRouteStops();
+      updateRoute();
+      toast('已自动优化为最短路线');
+    }
+  }
+
+  // All points including origin
+  const originGcj=wgs84ToGcj02(originPt.lng,originPt.lat);
+  const allPts=[{lng:originGcj.lng,lat:originGcj.lat},...routeStops.map(id=>{
     const c=clients.find(x=>x.id===id);
     if(!c)return null;
     const gcj=wgs84ToGcj02(c.lng,c.lat);
     return{lng:gcj.lng,lat:gcj.lat};
-  }).filter(Boolean);
-  if(pts.length<2)return;
+  }).filter(Boolean)];
 
   document.getElementById('calcBtn').textContent='计算中...';
   document.getElementById('calcBtn').disabled=true;
 
-  // Check if order changed
-  const orderChanged=originalOrder.some((id,i)=>id!==routeStops[i]);
-  if(orderChanged)toast('已自动优化为最短路线');
-
   try{
-    const coords=pts.map(p=>`${p.lng},${p.lat}`).join(';');
+    const coords=allPts.map(p=>`${p.lng},${p.lat}`).join(';');
     const url=`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
     const res=await fetch(url);
     const data=await res.json();
@@ -1549,7 +1776,7 @@ async function calcRoute(){
     const summaryEl=document.getElementById('routeSummary');
     summaryEl.style.display='flex';
     summaryEl.innerHTML=`
-      <div class="stats">总距离 <strong>${distKm} km</strong> · 预计 <strong>${durMin} 分钟</strong>${orderChanged?' · <span style="color:#1677ff">已优化</span>':''}</div>
+      <div class="stats">从<strong>${esc(originName)}</strong>出发 · <strong>${distKm} km</strong> · 预计 <strong>${durMin} 分钟</strong></div>
       <button class="btn btn-primary btn-sm" onclick="openNavigation()">开始导航</button>
     `;
   }catch(e){
@@ -1557,23 +1784,38 @@ async function calcRoute(){
     console.error(e);
   }finally{
     document.getElementById('calcBtn').textContent='计算路线';
-    document.getElementById('calcBtn').disabled=routeStops.length<2;
+    document.getElementById('calcBtn').disabled=routeStops.length<1;
   }
 }
 
 function openNavigation(){
-  if(routeStops.length<2)return;
-  // Open Gaode navigation in new tab (works on mobile)
-  const pts=routeStops.map(id=>{
+  if(routeStops.length<1)return;
+
+  // Build points: origin + stops
+  let fromPt=null;
+  if(_routeOrigin){
+    fromPt={name:_routeOrigin.name,lat:_routeOrigin.lat,lng:_routeOrigin.lng};
+  }else{
+    // Use last known locate marker position, or get fresh
+    if(locateMarker){
+      const ll=locateMarker.getLatLng();
+      // Convert GCJ-02 back to WGS-84
+      const gcj=wgs84ToGcj02(ll.lng,ll.lat);
+      fromPt={name:'我的位置',lat:ll.lat-(gcj.lat-ll.lat),lng:ll.lng-(gcj.lng-ll.lng)};
+    }else{
+      return toast('请先计算路线以获取出发点');
+    }
+  }
+
+  const stops=routeStops.map(id=>{
     const c=clients.find(x=>x.id===id);
     if(!c)return null;
     return{name:c.name,lat:c.lat,lng:c.lng};
   }).filter(Boolean);
-  if(pts.length<2)return;
+  if(stops.length<1)return;
 
-  // Gaode nav URL: from first to last, via middle points
-  const from=pts[0],to=pts[pts.length-1];
-  const via=pts.slice(1,-1);
+  const from=fromPt,to=stops[stops.length-1];
+  const via=stops.slice(0,-1);
   let url=`https://uri.amap.com/navigation?from=${from.lng},${from.lat},${encodeURIComponent(from.name)}&to=${to.lng},${to.lat},${encodeURIComponent(to.name)}&mode=car`;
   if(via.length>0){
     url+='&via='+via.map(v=>`${v.lng},${v.lat},${encodeURIComponent(v.name)}`).join('|');
@@ -1750,6 +1992,7 @@ async function syncFromGitHub(){
       refreshAllMarkers();
       updateClientList();
       updateRoute();
+      updateVisitPlanUI();
       toast('☁️ 已从云端同步 '+clients.length+' 位客户');
     }else if(localLen>0&&remoteLen===0){
       // Local has data but GitHub is empty - push to cloud
@@ -1768,6 +2011,7 @@ async function syncFromGitHub(){
         refreshAllMarkers();
         updateClientList();
         updateRoute();
+        updateVisitPlanUI();
         syncToGitHub();
         toast('☁️ 数据已合并，共 '+clients.length+' 位客户');
       }
@@ -1780,6 +2024,20 @@ async function syncFromGitHub(){
 
 // ===================== Init =====================
 (function init(){
+  // Clean up stale route stop / visit plan IDs (clients that no longer exist)
+  const clientIds=new Set(clients.map(c=>c.id));
+  const beforeStops=routeStops.length,beforePlan=visitPlan.length;
+  routeStops=routeStops.filter(id=>clientIds.has(id));
+  visitPlan=visitPlan.filter(id=>clientIds.has(id));
+  if(routeStops.length!==beforeStops)saveRouteStops();
+  if(visitPlan.length!==beforePlan)saveVisitPlan();
+
+  // Restore custom route origin if saved
+  try{
+    const savedOrigin=localStorage.getItem(ROUTE_ORIGIN_KEY);
+    if(savedOrigin)_routeOrigin=JSON.parse(savedOrigin);
+  }catch(e){}
+
   refreshAllMarkers();
   updateClientList();
   updateRoute();
