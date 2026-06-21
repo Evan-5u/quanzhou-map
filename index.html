@@ -863,7 +863,7 @@ function saveClients(){
   localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
   localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
   updateClientList();
-  syncToGitHub();
+  scheduleSyncToGitHub();
 }
 
 function saveClient(){
@@ -897,7 +897,8 @@ function saveClient(){
     level:document.getElementById('fLevel').value,
     notes:document.getElementById('fNotes').value.trim(),
     visitDays,visitDate,
-    lat,lng
+    lat,lng,
+    _updated:Date.now()
   };
 
   if(eid){
@@ -1243,7 +1244,8 @@ async function quickAddClient(){
       name,address:geo.addr||addr,
       phone:'',industry:'',level:'B',notes:'',
       visitDays,visitDate,
-      lat:wgsLat,lng:wgsLng
+      lat:wgsLat,lng:wgsLng,
+      _updated:Date.now()
     };
 
     clients.push(data);
@@ -1301,7 +1303,8 @@ async function batchAddClients(){
         name,address:geo.addr||addr,
         phone:'',industry:'',level:'B',notes:'',
         visitDays:null,visitDate:null,
-        lat:wgsLat,lng:wgsLng
+        lat:wgsLat,lng:wgsLng,
+        _updated:Date.now()
       };
       clients.push(data);
       addMarker(data);
@@ -1974,21 +1977,27 @@ function toast(msg){
 }
 
 // ===================== GitHub Cloud Sync =====================
+let _syncTimer=null; // debounce timer for push
+let _pollTimer=null; // periodic pull timer
+const POLL_INTERVAL=30000; // 30 seconds auto-pull
+let _lastPullHash=''; // hash of last pulled data to detect changes
+
+// Debounced push: wait 2s after last change before uploading
+function scheduleSyncToGitHub(){
+  clearTimeout(_syncTimer);
+  _syncTimer=setTimeout(()=>syncToGitHub(),2000);
+}
+
 async function syncToGitHub(){
   if(_syncing)return;
   _syncing=true;
   try{
-    // Fetch current SHA if not cached
     if(!_ghSha){
       try{
         const getRes=await fetch(GH_API,{headers:{'Authorization':'token '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}});
-        if(getRes.ok){
-          const getData=await getRes.json();
-          _ghSha=getData.sha;
-        }
-      }catch(e){/* file doesn't exist yet, OK */}
+        if(getRes.ok){const gd=await getRes.json();_ghSha=gd.sha;}
+      }catch(e){}
     }
-    // Upload
     const content=btoa(unescape(encodeURIComponent(JSON.stringify(clients))));
     const body={message:'sync: 更新客户数据 '+new Date().toLocaleString('zh-CN'),content};
     if(_ghSha)body.sha=_ghSha;
@@ -1997,71 +2006,111 @@ async function syncToGitHub(){
       const putData=await putRes.json();
       _ghSha=putData.content.sha;
       localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
-      toast('☁️ 已同步');
+      // Update lastPullHash so next poll doesn't re-trigger merge
+      _lastPullHash=JSON.stringify(clients.map(c=>c.id+':'+c._updated).sort());
     }else{
-      console.warn('GitHub sync failed:',putRes.status);
+      console.warn('GitHub push failed:',putRes.status);
     }
-  }catch(e){
-    console.warn('Sync error:',e);
-  }finally{
-    _syncing=false;
-  }
+  }catch(e){console.warn('Sync push error:',e);}
+  finally{_syncing=false;}
 }
 
+// Compute a fingerprint of client data for change detection
+function clientsHash(arr){return arr.map(c=>c.id+':'+c._updated+':'+c.name).sort().join('|')}
+
 async function syncFromGitHub(){
+  if(_syncing)return;
   try{
     const res=await fetch(GH_API,{headers:{'Authorization':'token '+GH_TOKEN,'Accept':'application/vnd.github.v3+json'}});
-    if(!res.ok)return; // file doesn't exist or auth failed
+    if(!res.ok)return;
     const data=await res.json();
     _ghSha=data.sha;
     const jsonStr=decodeURIComponent(escape(atob(data.content)));
     const remoteClients=JSON.parse(jsonStr);
     if(!Array.isArray(remoteClients))return;
 
+    // Check if remote data actually changed since last pull
+    const remoteHash=clientsHash(remoteClients);
+    if(remoteHash===_lastPullHash)return; // no change, skip
+
     const localLen=clients.length;
     const remoteLen=remoteClients.length;
-    const localSyncTime=parseInt(localStorage.getItem(SYNC_TS_KEY)||'0');
 
     if(localLen===0&&remoteLen>0){
       // Fresh device or empty local - load from cloud
       clients=remoteClients;
       localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
       localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
-      refreshAllMarkers();
-      updateClientList();
-      updateRoute();
-      updateVisitPlanUI();
+      _lastPullHash=remoteHash;
+      refreshAllMarkers();updateClientList();updateRoute();updateVisitPlanUI();
       toast('☁️ 已从云端同步 '+clients.length+' 位客户');
     }else if(localLen>0&&remoteLen===0){
-      // Local has data but GitHub is empty - push to cloud
       syncToGitHub();
     }else if(localLen>0&&remoteLen>0){
-      // Both have data - merge by id (union)
-      const idMap=new Map();
-      remoteClients.forEach(c=>idMap.set(c.id,c));
-      clients.forEach(c=>idMap.set(c.id,c)); // local wins for same id
-      const merged=Array.from(idMap.values());
-      if(merged.length>localLen||merged.length>remoteLen){
-        // New clients found - update both sides
+      // Timestamp-based merge: for each ID, keep the version with newer _updated
+      const localMap=new Map(clients.map(c=>[c.id,c]));
+      const remoteMap=new Map(remoteClients.map(c=>[c.id,c]));
+      const mergedMap=new Map();
+      let changed=false;
+
+      // Process all IDs from both sides
+      const allIds=new Set([...localMap.keys(),...remoteMap.keys()]);
+      for(const id of allIds){
+        const local=localMap.get(id);
+        const remote=remoteMap.get(id);
+        if(local&&remote){
+          // Both exist: keep newer version by _updated timestamp
+          const lu=local._updated||0;
+          const ru=remote._updated||0;
+          if(ru>lu){mergedMap.set(id,remote);changed=true;}
+          else{mergedMap.set(id,local);}
+        }else if(local){
+          mergedMap.set(id,local);
+        }else{
+          mergedMap.set(id,remote);changed=true;
+        }
+      }
+
+      const merged=Array.from(mergedMap.values());
+      // Also detect if local is missing clients that remote has
+      const localChanged=merged.length!==localLen;
+      const remoteChanged=merged.length!==remoteLen;
+
+      if(changed||localChanged||remoteChanged){
         clients=merged;
         localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
         localStorage.setItem(SYNC_TS_KEY,Date.now().toString());
-        refreshAllMarkers();
-        updateClientList();
-        updateRoute();
-        updateVisitPlanUI();
+        _lastPullHash=clientsHash(clients);
+        refreshAllMarkers();updateClientList();updateRoute();updateVisitPlanUI();
+        // Push merged result back to GitHub
         syncToGitHub();
-        toast('☁️ 数据已合并，共 '+clients.length+' 位客户');
+        toast('☁️ 数据已同步，共 '+clients.length+' 位客户');
+      }else{
+        // Data is identical, just update hash
+        _lastPullHash=remoteHash;
       }
-      // If same count and same ids, no action needed
     }
-  }catch(e){
-    console.warn('syncFromGitHub error:',e);
-  }
+  }catch(e){console.warn('syncFromGitHub error:',e);}
+}
+
+// Start periodic background sync (pull from GitHub every 30s)
+function startAutoSync(){
+  if(_pollTimer)clearInterval(_pollTimer);
+  _pollTimer=setInterval(()=>{
+    // Silent background pull - only show toast if data actually changed
+    syncFromGitHub();
+  },POLL_INTERVAL);
 }
 
 // ===================== Init =====================
 (function init(){
+  // Migrate: add _updated timestamp to old clients that don't have one
+  let migrated=false;
+  clients.forEach(c=>{
+    if(!c._updated){c._updated=Date.now();migrated=true;}
+  });
+  if(migrated)localStorage.setItem(STORAGE_KEY,JSON.stringify(clients));
+
   // Clean up stale route stop / visit plan IDs (clients that no longer exist)
   const clientIds=new Set(clients.map(c=>c.id));
   const beforeStops=routeStops.length,beforePlan=visitPlan.length;
@@ -2086,8 +2135,13 @@ async function syncFromGitHub(){
     const bounds=L.latLngBounds(clients.map(c=>{const g=wgs84ToGcj02(c.lng,c.lat);return[g.lat,g.lng]}));
     map.fitBounds(bounds,{padding:[50,50]});
   }
-  // Background cloud sync after 1s
-  setTimeout(()=>syncFromGitHub(),1000);
+  // Initial cloud sync after 1s, then start 30s auto-poll
+  setTimeout(()=>{
+    syncFromGitHub().then(()=>{
+      _lastPullHash=clientsHash(clients);
+      startAutoSync();
+    });
+  },1000);
 })();
 </script>
 </body>
