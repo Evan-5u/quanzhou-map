@@ -524,24 +524,40 @@ function showUrgentBanner(urgentClients){
   if(!banner){
     banner=document.createElement('div');
     banner.id='urgentBanner';
-    banner.style.cssText='position:fixed;bottom:200px;left:12px;right:12px;z-index:997;background:#fff1f0;border:2px solid #ff4d4f;border-radius:12px;padding:10px 14px;font-size:13px;color:#cf1322;max-height:35vh;overflow-y:auto;box-shadow:0 4px 16px rgba(255,77,79,.25)';
+    banner.style.cssText='position:fixed;bottom:200px;left:12px;right:12px;z-index:9999;background:#fff1f0;border:2px solid #ff4d4f;border-radius:12px;padding:10px 14px;font-size:13px;color:#cf1322;max-height:35vh;overflow-y:auto;box-shadow:0 4px 16px rgba(255,77,79,.25);pointer-events:auto';
     document.body.appendChild(banner);
+    // Event delegation: handle all clicks on the banner
+    banner.addEventListener('click',function(e){
+      e.stopPropagation();e.preventDefault();
+      const btn=e.target.closest('[data-action]');
+      if(!btn)return;
+      const action=btn.dataset.action;
+      const cid=btn.dataset.cid;
+      if(action==='locate'&&cid){
+        toast('正在定位客户...');
+        flyToClient(cid);
+      }else if(action==='copy'){
+        copyUrgentList();
+      }else if(action==='close'){
+        banner.style.display='none';
+      }
+    });
   }
   const items=urgentClients.sort((a,b)=>getEffectiveVisitDays(a)-getEffectiveVisitDays(b));
   banner.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
     <strong>⚠️ ${items.length}位客户急需拜访（≤3天）</strong>
     <span style="display:flex;gap:6px">
-      <button onclick="copyUrgentList()" style="background:#1677ff;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">📋 复制提醒</button>
-      <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;font-size:16px;cursor:pointer;color:#cf1322">✕</button>
+      <button data-action="copy" style="background:#1677ff;color:#fff;border:none;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;pointer-events:auto">📋 复制提醒</button>
+      <button data-action="close" style="background:none;border:none;font-size:18px;cursor:pointer;color:#cf1322;pointer-events:auto;padding:0 4px">✕</button>
     </span>
   </div>`+items.map(c=>{
     const eff=getEffectiveVisitDays(c);
     const color=eff===0?'#cf1322':eff<=1?'#d4380d':'#d48806';
-    return `<div style="padding:4px 0;border-bottom:1px solid #ffd8d8;display:flex;justify-content:space-between;align-items:center">
-      <span><b style="color:${color}">${eff===0?'今天!':eff+'天'}</b> ${esc(c.name)} - ${esc(c.address)}</span>
-      <span style="display:flex;gap:4px">
-        ${c.phone?`<a href="tel:${esc(c.phone)}" style="color:#1677ff;text-decoration:none;font-size:12px">📞</a>`:''}
-        <button onclick="flyToClient('${c.id}')" style="background:#1677ff;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">📍 定位</button>
+    return `<div style="padding:6px 0;border-bottom:1px solid #ffd8d8;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span style="flex:1;min-width:0"><b style="color:${color}">${eff===0?'今天!':eff+'天'}</b> ${esc(c.name)}</span>
+      <span style="display:flex;gap:6px;flex-shrink:0">
+        ${c.phone?`<a href="tel:${esc(c.phone)}" style="color:#1677ff;text-decoration:none;font-size:13px;pointer-events:auto">📞</a>`:''}
+        <button data-action="locate" data-cid="${c.id}" style="background:#1677ff;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;pointer-events:auto;font-weight:600;white-space:nowrap">📍 定位</button>
       </span>
     </div>`;
   }).join('');
@@ -1049,18 +1065,16 @@ function flyTo(id){
   if(!c)return;
   closeAllPanels();
   const gcj=wgs84ToGcj02(c.lng,c.lat);
-  map.flyTo(gcj.lat,gcj.lng,17,{duration:0.8});
+  map.flyTo(gcj.lat,gcj.lng,17,{duration:1});
   // Highlight marker with pulse animation
   if(markers[id]){
     const m=markers[id];
-    // Re-create icon with highlight class
     const label=markerLabel(c.name);
     m.setIcon(L.divIcon({
       className:'',
-      html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:${label.size+2}px;font-weight:700;box-shadow:0 0 0 8px rgba(255,77,79,.3),0 2px 8px rgba(0,0,0,.3);border:3px solid #ff4d4f;animation:pulse 1.5s infinite;line-height:1">${label.text}</div>`,
-      iconSize:[40,40],iconAnchor:[20,20],popupAnchor:[0,-22]
+      html:`<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:${label.size+3}px;font-weight:700;box-shadow:0 0 0 10px rgba(255,77,79,.4),0 0 20px rgba(255,77,79,.6);border:3px solid #fff;animation:pulse 1s infinite;line-height:1">${label.text}</div>`,
+      iconSize:[44,44],iconAnchor:[22,22],popupAnchor:[0,-24]
     }));
-    // Reset marker icon after 5 seconds
     setTimeout(()=>{
       if(markers[id]){
         markers[id].setIcon(L.divIcon({
@@ -1069,36 +1083,52 @@ function flyTo(id){
           iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
         }));
       }
-    },5000);
-    setTimeout(()=>m.openPopup(),900);
+    },6000);
+    setTimeout(()=>m.openPopup(),1000);
+  }else{
+    addMarker(c);
+    setTimeout(()=>{if(markers[id])markers[id].openPopup()},1100);
   }
 }
 
 // Fly to client marker without closing panels (used by urgent banner locate button)
 function flyToClient(id){
-  const c=clients.find(x=>x.id===id);
-  if(!c)return;
-  const gcj=wgs84ToGcj02(c.lng,c.lat);
-  map.flyTo(gcj.lat,gcj.lng,17,{duration:0.8});
-  if(markers[id]){
-    const m=markers[id];
-    const label=markerLabel(c.name);
-    // Highlight with pulse
-    m.setIcon(L.divIcon({
-      className:'',
-      html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:${label.size+2}px;font-weight:700;box-shadow:0 0 0 8px rgba(255,77,79,.3),0 2px 8px rgba(0,0,0,.3);border:3px solid #ff4d4f;animation:pulse 1.5s infinite;line-height:1">${label.text}</div>`,
-      iconSize:[40,40],iconAnchor:[20,20],popupAnchor:[0,-22]
-    }));
-    setTimeout(()=>{
-      if(markers[id]){
-        markers[id].setIcon(L.divIcon({
-          className:'',
-          html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:${label.size}px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;line-height:1">${label.text}</div>`,
-          iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
-        }));
-      }
-    },5000);
-    setTimeout(()=>m.openPopup(),900);
+  try{
+    const c=clients.find(x=>x.id===id);
+    if(!c){toast('❌ 未找到该客户');return;}
+    const gcj=wgs84ToGcj02(c.lng,c.lat);
+    map.flyTo(gcj.lat,gcj.lng,17,{duration:1});
+    if(markers[id]){
+      const m=markers[id];
+      const label=markerLabel(c.name);
+      // Dramatic highlight: large pulsing red marker
+      m.setIcon(L.divIcon({
+        className:'',
+        html:`<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:${label.size+3}px;font-weight:700;box-shadow:0 0 0 10px rgba(255,77,79,.4),0 0 20px rgba(255,77,79,.6);border:3px solid #fff;animation:pulse 1s infinite;line-height:1">${label.text}</div>`,
+        iconSize:[44,44],iconAnchor:[22,22],popupAnchor:[0,-24]
+      }));
+      // Reset marker icon after 6 seconds
+      setTimeout(()=>{
+        if(markers[id]){
+          markers[id].setIcon(L.divIcon({
+            className:'',
+            html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:${label.size}px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;line-height:1">${label.text}</div>`,
+            iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
+          }));
+        }
+      },6000);
+      setTimeout(()=>{m.openPopup();toast('📍 '+c.name);},1000);
+    }else{
+      // Marker doesn't exist yet, create it and fly
+      addMarker(c);
+      setTimeout(()=>{
+        if(markers[id])markers[id].openPopup();
+        toast('📍 '+c.name);
+      },1100);
+    }
+  }catch(e){
+    console.error('flyToClient error:',e);
+    toast('定位失败: '+e.message);
   }
 }
 
