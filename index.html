@@ -1093,43 +1093,51 @@ function flyTo(id){
 
 // Fly to client marker without closing panels (used by urgent banner locate button)
 function flyToClient(id){
-  try{
-    const c=clients.find(x=>x.id===id);
-    if(!c){toast('❌ 未找到该客户');return;}
-    const gcj=wgs84ToGcj02(c.lng,c.lat);
-    map.flyTo(gcj.lat,gcj.lng,17,{duration:1});
-    if(markers[id]){
+  // Step 1: Find client
+  const c=clients.find(x=>x.id===id);
+  if(!c){toast('❌ 未找到该客户(ID:'+id+')');return;}
+
+  // Step 2: Validate coordinates
+  if(!c.lat||!c.lng||isNaN(c.lat)||isNaN(c.lng)){
+    toast('❌ '+c.name+' 坐标无效');return;
+  }
+
+  // Step 3: Convert and move map
+  const gcj=wgs84ToGcj02(c.lng,c.lat);
+  try{map.setView([gcj.lat,gcj.lng],17,{animate:true,duration:1});}catch(e){console.warn('setView error:',e);}
+
+  // Step 4: Highlight marker
+  const label=markerLabel(c.name);
+  if(markers[id]){
+    try{
       const m=markers[id];
-      const label=markerLabel(c.name);
-      // Dramatic highlight: large pulsing red marker
       m.setIcon(L.divIcon({
         className:'',
-        html:`<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:${label.size+3}px;font-weight:700;box-shadow:0 0 0 10px rgba(255,77,79,.4),0 0 20px rgba(255,77,79,.6);border:3px solid #fff;animation:pulse 1s infinite;line-height:1">${label.text}</div>`,
+        html:'<div style="background:#ff4d4f;color:#fff;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:'+(label.size+3)+'px;font-weight:700;box-shadow:0 0 0 10px rgba(255,77,79,.4),0 0 20px rgba(255,77,79,.6);border:3px solid #fff;animation:pulse 1s infinite;line-height:1">'+label.text+'</div>',
         iconSize:[44,44],iconAnchor:[22,22],popupAnchor:[0,-24]
       }));
-      // Reset marker icon after 6 seconds
-      setTimeout(()=>{
+      setTimeout(function(){
         if(markers[id]){
           markers[id].setIcon(L.divIcon({
             className:'',
-            html:`<div style="background:${levelColor(c.level)};color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:${label.size}px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;line-height:1">${label.text}</div>`,
+            html:'<div style="background:'+levelColor(c.level)+';color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:'+label.size+'px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;line-height:1">'+label.text+'</div>',
             iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-20]
           }));
         }
       },6000);
-      setTimeout(()=>{m.openPopup();toast('📍 '+c.name);},1000);
-    }else{
-      // Marker doesn't exist yet, create it and fly
-      addMarker(c);
-      setTimeout(()=>{
-        if(markers[id])markers[id].openPopup();
-        toast('📍 '+c.name);
-      },1100);
-    }
-  }catch(e){
-    console.error('flyToClient error:',e);
-    toast('定位失败: '+e.message);
+    }catch(e){console.warn('setIcon error:',e);}
+  }else{
+    // Create marker if missing
+    try{addMarker(c);}catch(e){console.warn('addMarker error:',e);}
   }
+
+  // Step 5: Open popup after delay
+  setTimeout(function(){
+    try{
+      if(markers[id])markers[id].openPopup();
+    }catch(e){console.warn('openPopup error:',e);}
+    toast('📍 '+c.name);
+  },800);
 }
 
 function togglePanel(id){
